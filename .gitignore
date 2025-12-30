@@ -1,0 +1,11 @@
+# env
+.env
+
+# node
+node_modules/
+
+# docker
+*.log
+
+# misc
+.DS_Store
