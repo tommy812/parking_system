@@ -1,11 +1,12 @@
+# dependencies
+node_modules/
+backend/node_modules/
+
 # env
 .env
 
-# node
-node_modules/
-
-# docker
+# logs
 *.log
 
-# misc
+# OS
 .DS_Store
