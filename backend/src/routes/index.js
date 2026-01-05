@@ -5,6 +5,7 @@ const { pool } = require("../config/db");
 const usersRouter = require("./users");
 const parkingsRouter = require("./parkings");
 const bookingsRouter = require("./bookings");
+const paymentsRouter = require("./payments");
 
 // health API root
 router.get("/", (req, res) => {
@@ -28,5 +29,6 @@ module.exports = router;
 router.use("/users", usersRouter);
 router.use("/parkings", parkingsRouter);
 router.use("/bookings", bookingsRouter);
+router.use("/payments", paymentsRouter);
 
 module.exports = router;

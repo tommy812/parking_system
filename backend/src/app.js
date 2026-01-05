@@ -3,6 +3,9 @@ const apiRouter = require("./routes");
 
 const app = express();
 
+const stripeWebhookRouter = require("./routes/stripeWebhook");
+app.use("/api/webhooks/stripe", stripeWebhookRouter); // raw body route first
+
 app.use(express.json());
 app.use(logger);
 
