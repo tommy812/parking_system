@@ -4,7 +4,7 @@ const router = express.Router();
 const { pool } = require("../config/db"); 
 const usersRouter = require("./users");
 const parkingsRouter = require("./parkings");
-
+const bookingsRouter = require("./bookings");
 
 // health API root
 router.get("/", (req, res) => {
@@ -27,5 +27,6 @@ module.exports = router;
 // mount users routes
 router.use("/users", usersRouter);
 router.use("/parkings", parkingsRouter);
+router.use("/bookings", bookingsRouter);
 
 module.exports = router;

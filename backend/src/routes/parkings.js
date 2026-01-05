@@ -33,4 +33,60 @@ router.get("/:id/pricing", async (req, res, next) => {
   }
 });
 
+
+// GET /api/parkings/:id/availability?start_at=...&end_at=...
+router.get("/:id/availability", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { start_at, end_at } = req.query;
+
+    const start = new Date(start_at);
+    const end = new Date(end_at);
+
+    if (!start_at || !end_at || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return res.status(400).json({
+        error: "start_at and end_at are required query params in ISO format",
+      });
+    }
+    if (end <= start) {
+      return res.status(400).json({ error: "end_at must be after start_at" });
+    }
+
+    // Get capacity
+    const parkingRes = await pool.query(
+      `SELECT id, capacity
+       FROM parkings
+       WHERE id = $1`,
+      [id]
+    );
+    if (parkingRes.rowCount === 0) return res.status(404).json({ error: "Parking not found" });
+
+    const capacity = parkingRes.rows[0].capacity;
+
+    // Count overlapping bookings (PENDING + CONFIRMED block inventory)
+    const countRes = await pool.query(
+      `SELECT COUNT(*)::int AS booked_count
+       FROM bookings
+       WHERE parking_id = $1
+         AND status IN ('PENDING', 'CONFIRMED')
+         AND start_at < $3
+         AND end_at > $2`,
+      [id, start.toISOString(), end.toISOString()]
+    );
+
+    const bookedCount = countRes.rows[0].booked_count;
+    const available = bookedCount < capacity;
+
+    res.json({
+      parking_id: id,
+      capacity,
+      booked_count: bookedCount,
+      available,
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+
 module.exports = router;
