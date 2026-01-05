@@ -16,6 +16,113 @@ function diffMinutes(start, end) {
   return Math.ceil((end.getTime() - start.getTime()) / (1000 * 60));
 }
 
+router.post("/quote", async (req, res, next) => {
+  try {
+    const { parking_id, start_at, end_at } = req.body;
+
+    if (!parking_id) {
+      return res.status(400).json({ error: "parking_id is required" });
+    }
+
+    const start = new Date(start_at);
+    const end = new Date(end_at);
+
+    if (!start_at || !end_at || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return res.status(400).json({ error: "start_at and end_at must be ISO datetime strings" });
+    }
+
+    if (end <= start) {
+      return res.status(400).json({ error: "end_at must be after start_at" });
+    }
+
+    const durationMinutes = Math.ceil((end - start) / (1000 * 60));
+
+    // ensure parking exists (nice API behavior)
+    const parkingRes = await pool.query(
+      `SELECT id, currency
+       FROM parkings
+       WHERE id = $1`,
+      [parking_id]
+    );
+
+    if (parkingRes.rowCount === 0) {
+      return res.status(404).json({ error: "Parking not found" });
+    }
+
+    const tierRes = await pool.query(
+      `SELECT max_minutes, price_pence, currency
+       FROM pricing_tiers
+       WHERE parking_id = $1
+         AND is_active = true
+         AND max_minutes >= $2
+       ORDER BY max_minutes ASC
+       LIMIT 1`,
+      [parking_id, durationMinutes]
+    );
+
+    if (tierRes.rowCount === 0) {
+      return res.status(400).json({
+        error: "No pricing tier for duration",
+        duration_minutes: durationMinutes,
+      });
+    }
+
+    const tier = tierRes.rows[0];
+
+    return res.json({
+      parking_id,
+      duration_minutes: durationMinutes,
+      price_pence: tier.price_pence,
+      currency: tier.currency || parkingRes.rows[0].currency,
+      tier_max_minutes: tier.max_minutes,
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// POST /api/bookings/:id/cancel
+router.post("/:id/cancel", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const r = await pool.query(
+      `UPDATE bookings
+       SET status = 'CANCELLED',
+           updated_at = now()
+       WHERE id = $1
+         AND status IN ('PENDING', 'CONFIRMED')
+       RETURNING id, user_id, parking_id, start_at, end_at, status, total_amount_pence, currency, created_at, updated_at`,
+      [id]
+    );
+
+    // If updated, we successfully cancelled
+    if (r.rowCount === 1) {
+      return res.json({ booking: r.rows[0] });
+    }
+
+    // If not updated, booking might not exist OR is already cancelled/expired
+    const check = await pool.query(
+      `SELECT id, status
+       FROM bookings
+       WHERE id = $1`,
+      [id]
+    );
+
+    if (check.rowCount === 0) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    // Idempotent behavior: already cancelled/expired → return current status
+    return res.json({
+      booking: { id: check.rows[0].id, status: check.rows[0].status },
+      message: "Booking was not cancellable (already cancelled/expired)",
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
 // POST /api/bookings
 router.post("/", async (req, res, next) => {
   const client = await pool.connect();
