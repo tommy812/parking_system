@@ -1,10 +1,20 @@
 const express = require("express");
 const apiRouter = require("./routes");
+const cors = require("cors");
 
 const app = express();
 
 const stripeWebhookRouter = require("./routes/stripeWebhook");
 app.use("/api/webhooks/stripe", stripeWebhookRouter); // raw body route first
+
+// DEV CORS (ok for localhost development)
+app.use(
+  cors({
+    origin: true, // reflect request origin (works for file:// as well)
+    credentials: true,
+  })
+);
+
 
 app.use(express.json());
 app.use(logger);

@@ -1,11 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const { pool } = require("../config/db");
+const { stripe } = require("../config/stripe");
 
 function parseIsoDate(value, fieldName) {
   const d = new Date(value);
   if (!value || Number.isNaN(d.getTime())) {
-    const err = new Error(`Invalid ${fieldName}. Use ISO format (e.g. 2026-01-02T10:00:00Z)`);
+    const err = new Error(
+      `Invalid ${fieldName}. Use ISO format (e.g. 2026-01-02T10:00:00Z)`
+    );
     err.status = 400;
     throw err;
   }
@@ -15,6 +18,8 @@ function parseIsoDate(value, fieldName) {
 function diffMinutes(start, end) {
   return Math.ceil((end.getTime() - start.getTime()) / (1000 * 60));
 }
+
+// POST /api/bookings/:id/sync-payment
 
 router.post("/quote", async (req, res, next) => {
   try {
@@ -27,8 +32,15 @@ router.post("/quote", async (req, res, next) => {
     const start = new Date(start_at);
     const end = new Date(end_at);
 
-    if (!start_at || !end_at || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      return res.status(400).json({ error: "start_at and end_at must be ISO datetime strings" });
+    if (
+      !start_at ||
+      !end_at ||
+      Number.isNaN(start.getTime()) ||
+      Number.isNaN(end.getTime())
+    ) {
+      return res
+        .status(400)
+        .json({ error: "start_at and end_at must be ISO datetime strings" });
     }
 
     if (end <= start) {
@@ -81,6 +93,22 @@ router.post("/quote", async (req, res, next) => {
   }
 });
 
+router.get("/:id", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const r = await pool.query(
+      `SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
+       FROM bookings
+       WHERE id = $1`,
+      [id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: "Booking not found" });
+    res.json({ booking: r.rows[0] });
+  } catch (e) {
+    next(e);
+  }
+});
+
 // POST /api/bookings/:id/cancel
 router.post("/:id/cancel", async (req, res, next) => {
   try {
@@ -91,7 +119,7 @@ router.post("/:id/cancel", async (req, res, next) => {
        SET status = 'CANCELLED',
            updated_at = now()
        WHERE id = $1
-         AND status IN ('PENDING', 'CONFIRMED')
+         AND status = 'PENDING'
        RETURNING id, user_id, parking_id, start_at, end_at, status, total_amount_pence, currency, created_at, updated_at`,
       [id]
     );
@@ -114,12 +142,107 @@ router.post("/:id/cancel", async (req, res, next) => {
     }
 
     // Idempotent behavior: already cancelled/expired → return current status
-    return res.json({
+    return res.status(409).json({
+      error: `Booking cannot be cancelled in status=${check.rows[0].status}`,
       booking: { id: check.rows[0].id, status: check.rows[0].status },
-      message: "Booking was not cancellable (already cancelled/expired)",
     });
   } catch (e) {
     next(e);
+  }
+});
+
+router.post("/:id/sync-payment", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+
+    await client.query("BEGIN");
+
+    const bRes = await client.query(
+      `SELECT id, status, stripe_payment_intent_id
+       FROM bookings
+       WHERE id = $1
+       FOR UPDATE`,
+      [id]
+    );
+
+    if (bRes.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const booking = bRes.rows[0];
+
+    if (!booking.stripe_payment_intent_id) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Booking has no payment intent" });
+    }
+
+    const intent = await stripe.paymentIntents.retrieve(
+      booking.stripe_payment_intent_id
+    );
+
+    // Map Stripe -> our statuses
+    if (intent.status === "succeeded") {
+      const upd = await client.query(
+        `UPDATE bookings
+   SET status = 'CONFIRMED',
+       updated_at = now()
+   WHERE id = $1
+     AND status = 'PENDING'
+   RETURNING id, status`,
+        [booking.id]
+      );
+
+      if (upd.rowCount === 0) {
+        // Booking was not pending (cancelled/expired/confirmed) — do not change it
+        await client.query("COMMIT");
+        return res.json({
+          booking_id: booking.id,
+          intent_status: intent.status,
+          note: `Payment succeeded but booking not confirmed because status=${booking.status}`,
+        });
+      }
+
+      await client.query(
+        `UPDATE payments
+         SET status = 'SUCCEEDED',
+             raw = $2
+         WHERE provider='stripe' AND provider_payment_id = $1`,
+        [intent.id, JSON.stringify(intent)]
+      );
+
+      await client.query("COMMIT");
+      return res.json({
+        booking_id: booking.id,
+        synced_to: "CONFIRMED",
+        intent_status: intent.status,
+      });
+    }
+
+    if (intent.status === "canceled") {
+      await client.query(
+        `UPDATE payments
+         SET status = 'FAILED',
+             raw = $2
+         WHERE provider='stripe' AND provider_payment_id = $1`,
+        [intent.id, JSON.stringify(intent)]
+      );
+    }
+
+    await client.query("COMMIT");
+    return res.json({
+      booking_id: booking.id,
+      intent_status: intent.status,
+      note: "No state change applied",
+    });
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    next(e);
+  } finally {
+    client.release();
   }
 });
 
@@ -130,12 +253,15 @@ router.post("/", async (req, res, next) => {
     const { user_id, parking_id, start_at, end_at } = req.body;
 
     if (!user_id || !parking_id) {
-      return res.status(400).json({ error: "user_id and parking_id are required" });
+      return res
+        .status(400)
+        .json({ error: "user_id and parking_id are required" });
     }
 
     const start = parseIsoDate(start_at, "start_at");
     const end = parseIsoDate(end_at, "end_at");
-    if (end <= start) return res.status(400).json({ error: "end_at must be after start_at" });
+    if (end <= start)
+      return res.status(400).json({ error: "end_at must be after start_at" });
 
     const durationMinutes = diffMinutes(start, end);
 
@@ -210,7 +336,14 @@ router.post("/", async (req, res, next) => {
        VALUES
         ($1, $2, $3, $4, 'PENDING', $5, $6)
        RETURNING id, user_id, parking_id, start_at, end_at, status, total_amount_pence, currency, created_at, updated_at`,
-      [user_id, parking_id, start.toISOString(), end.toISOString(), totalAmountPence, bookingCurrency]
+      [
+        user_id,
+        parking_id,
+        start.toISOString(),
+        end.toISOString(),
+        totalAmountPence,
+        bookingCurrency,
+      ]
     );
 
     await client.query("COMMIT");

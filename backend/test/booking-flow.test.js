@@ -113,7 +113,6 @@ describe("Booking flow", () => {
       end_at: "2026-01-06T11:00:00Z",
     });
 
-    
     expect(create.statusCode).toBe(201);
     const bookingId = create.body.booking.id;
 
@@ -126,6 +125,107 @@ describe("Booking flow", () => {
     const cancelAgain = await request(app).post(
       `/api/bookings/${bookingId}/cancel`
     );
-    expect(cancelAgain.statusCode).toBe(200);
+    expect(cancelAgain.statusCode).toBe(409);
+  });
+  test("quote 60 minutes returns £2 (200 pence)", async () => {
+    const res = await request(app).post("/api/bookings/quote").send({
+      parking_id: parkingId,
+      start_at: "2026-01-10T10:00:00Z",
+      end_at: "2026-01-10T11:00:00Z",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.price_pence).toBe(200);
+  });
+
+  test("quote 240 minutes returns £3 (300 pence)", async () => {
+    const res = await request(app).post("/api/bookings/quote").send({
+      parking_id: parkingId,
+      start_at: "2026-01-10T10:00:00Z",
+      end_at: "2026-01-10T14:00:00Z",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.price_pence).toBe(300);
+  });
+  test("quote with invalid dates returns 400", async () => {
+    const res = await request(app).post("/api/bookings/quote").send({
+      parking_id: parkingId,
+      start_at: "not-a-date",
+      end_at: "2026-01-10T11:00:00Z",
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+  test("create booking with end before start returns 400", async () => {
+    const res = await request(app).post("/api/bookings").send({
+      user_id: userId,
+      parking_id: parkingId,
+      start_at: "2026-01-10T11:00:00Z",
+      end_at: "2026-01-10T10:00:00Z",
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  test("cancelled booking no longer consumes capacity", async () => {
+    // Set capacity to 1 for deterministic behavior
+    const orig = await pool.query(
+      "SELECT capacity FROM parkings WHERE id = $1",
+      [parkingId]
+    );
+    const originalCapacity = orig.rows[0].capacity;
+    await pool.query("UPDATE parkings SET capacity = 1 WHERE id = $1", [
+      parkingId,
+    ]);
+
+    const start_at = "2026-01-11T10:00:00Z";
+    const end_at = "2026-01-11T11:00:00Z";
+
+    try {
+      // create booking #1
+      const first = await request(app)
+        .post("/api/bookings")
+        .send({ user_id: userId, parking_id: parkingId, start_at, end_at });
+
+      expect(first.statusCode).toBe(201);
+      const bookingId = first.body.booking.id;
+
+      // booking #2 overlapping should fail (capacity reached)
+      const second = await request(app)
+        .post("/api/bookings")
+        .send({ user_id: userId, parking_id: parkingId, start_at, end_at });
+
+      expect(second.statusCode).toBe(409);
+
+      // cancel booking #1
+      const cancel = await request(app).post(
+        `/api/bookings/${bookingId}/cancel`
+      );
+      expect(cancel.statusCode).toBe(200);
+      expect(cancel.body.booking.status).toBe("CANCELLED");
+
+      // now booking #2 should succeed (capacity freed)
+      const third = await request(app)
+        .post("/api/bookings")
+        .send({ user_id: userId, parking_id: parkingId, start_at, end_at });
+
+      expect(third.statusCode).toBe(201);
+    } finally {
+      await pool.query(
+        `DELETE FROM payments WHERE booking_id IN (
+        SELECT id FROM bookings WHERE parking_id = $1 AND start_at = $2 AND end_at = $3
+      )`,
+        [parkingId, start_at, end_at]
+      );
+      await pool.query(
+        `DELETE FROM bookings WHERE parking_id = $1 AND start_at = $2 AND end_at = $3`,
+        [parkingId, start_at, end_at]
+      );
+      await pool.query("UPDATE parkings SET capacity = $2 WHERE id = $1", [
+        parkingId,
+        originalCapacity,
+      ]);
+    }
   });
 });
