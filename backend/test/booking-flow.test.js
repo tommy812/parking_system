@@ -113,6 +113,7 @@ describe("Booking flow", () => {
       end_at: "2026-01-06T11:00:00Z",
     });
 
+    
     expect(create.statusCode).toBe(201);
     const bookingId = create.body.booking.id;
 
