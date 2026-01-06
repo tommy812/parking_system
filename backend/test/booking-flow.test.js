@@ -228,4 +228,25 @@ describe("Booking flow", () => {
       ]);
     }
   });
+  test("cannot create payment intent for CANCELLED booking", async () => {
+    // create booking
+    const created = await request(app).post("/api/bookings").send({
+      user_id: userId,
+      parking_id: parkingId,
+      start_at: "2026-01-13T10:00:00Z",
+      end_at: "2026-01-13T11:00:00Z",
+    });
+    expect(created.statusCode).toBe(201);
+    const bookingId = created.body.booking.id;
+
+    // cancel it
+    const cancel = await request(app).post(`/api/bookings/${bookingId}/cancel`);
+    expect(cancel.statusCode).toBe(200);
+
+    // try to pay
+    const pay = await request(app)
+      .post("/api/payments/create-intent")
+      .send({ booking_id: bookingId });
+    expect(pay.statusCode).toBe(409);
+  });
 });

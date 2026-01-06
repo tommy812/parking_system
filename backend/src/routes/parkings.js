@@ -2,6 +2,23 @@ const express = require("express");
 const router = express.Router();
 const { pool } = require("../config/db");
 
+
+
+// POST /api/parkings -> create a parking
+router.post("/", async (req, res, next) => {
+  try {
+    const { name, address, timezone, capacity, currency, image_url } = req.body;
+    const r = await pool.query(
+      `INSERT INTO parkings (name, address, timezone, capacity, currency, image_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [name, address, timezone, capacity, currency, image_url]
+    );
+    res.json(r.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+
 // GET /api/parkings  -> list parkings
 router.get("/", async (req, res, next) => {
   try {
@@ -15,6 +32,23 @@ router.get("/", async (req, res, next) => {
     next(e);
   }
 });
+
+// GET /api/parkings/:id -> get a parking
+router.get("/:id", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const r = await pool.query(
+      `SELECT id, name, address, timezone, capacity, currency, image_url, created_at
+       FROM parkings
+       WHERE id = $1`,
+      [id]
+    );
+    res.json(r.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
 
 // GET /api/parkings/:id/pricing -> pricing tiers for a parking
 router.get("/:id/pricing", async (req, res, next) => {

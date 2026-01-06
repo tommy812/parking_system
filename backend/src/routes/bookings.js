@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { pool } = require("../config/db");
 const { stripe } = require("../config/stripe");
+const { env } = require("../config/env");
 
 function parseIsoDate(value, fieldName) {
   const d = new Date(value);
@@ -19,7 +20,38 @@ function diffMinutes(start, end) {
   return Math.ceil((end.getTime() - start.getTime()) / (1000 * 60));
 }
 
-// POST /api/bookings/:id/sync-payment
+function validateBookingDates(start, end) {
+  const now = new Date();
+  
+  // Prevent bookings in the past
+  if (start < now) {
+    const err = new Error("start_at cannot be in the past");
+    err.status = 400;
+    throw err;
+  }
+
+  // Prevent bookings too far in the future
+  const maxBookingDate = new Date(now);
+  maxBookingDate.setDate(maxBookingDate.getDate() + env.MAX_BOOKING_DAYS_AHEAD);
+  
+  if (start > maxBookingDate) {
+    const err = new Error(
+      `start_at cannot be more than ${env.MAX_BOOKING_DAYS_AHEAD} days in the future`
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  if (end > maxBookingDate) {
+    const err = new Error(
+      `end_at cannot be more than ${env.MAX_BOOKING_DAYS_AHEAD} days in the future`
+    );
+    err.status = 400;
+    throw err;
+  }
+}
+
+
 
 router.post("/quote", async (req, res, next) => {
   try {
@@ -45,6 +77,13 @@ router.post("/quote", async (req, res, next) => {
 
     if (end <= start) {
       return res.status(400).json({ error: "end_at must be after start_at" });
+    }
+
+    // Validate booking dates (prevent past bookings and bookings too far in future)
+    try {
+      validateBookingDates(start, end);
+    } catch (validationError) {
+      return res.status(validationError.status || 400).json({ error: validationError.message });
     }
 
     const durationMinutes = Math.ceil((end - start) / (1000 * 60));
@@ -150,7 +189,7 @@ router.post("/:id/cancel", async (req, res, next) => {
     next(e);
   }
 });
-
+// POST /api/bookings/:id/sync-payment
 router.post("/:id/sync-payment", async (req, res, next) => {
   const client = await pool.connect();
   try {
@@ -263,6 +302,14 @@ router.post("/", async (req, res, next) => {
     if (end <= start)
       return res.status(400).json({ error: "end_at must be after start_at" });
 
+    // Validate booking dates (prevent past bookings and bookings too far in future)
+    try {
+      validateBookingDates(start, end);
+    } catch (validationError) {
+      await client.query("ROLLBACK");
+      return res.status(validationError.status || 400).json({ error: validationError.message });
+    }
+
     const durationMinutes = diffMinutes(start, end);
 
     await client.query("BEGIN");
@@ -364,5 +411,19 @@ router.post("/", async (req, res, next) => {
     client.release();
   }
 });
+
+// GET /api/bookings -> list bookings
+router.get("/", async (req, res, next) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
+       FROM bookings
+       ORDER BY created_at DESC`
+    );
+    res.json(r.rows);
+  } catch (e) {
+    next(e);
+  }
+}); 
 
 module.exports = router;
