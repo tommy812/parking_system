@@ -52,6 +52,84 @@ function validateBookingDates(start, end) {
   }
 }
 
+function minutesSinceUtcMidnight(d) {
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+
+function expandWindow(start, end, bufferMinutes) {
+  const b = Number(bufferMinutes || 0);
+  if (!Number.isFinite(b) || b <= 0) return { start, end };
+  return {
+    start: new Date(start.getTime() - b * 60 * 1000),
+    end: new Date(end.getTime() + b * 60 * 1000),
+  };
+}
+
+async function validateParkingSchedule(clientOrPool, parkingId, start, end, durationMinutes) {
+  const r = await clientOrPool.query(
+    `SELECT id,
+            open_start_minute_utc,
+            open_end_minute_utc,
+            min_booking_minutes,
+            max_booking_minutes,
+            buffer_minutes
+     FROM parkings
+     WHERE id = $1`,
+    [parkingId]
+  );
+  if (r.rowCount === 0) {
+    const err = new Error("Parking not found");
+    err.status = 404;
+    throw err;
+  }
+
+  const p = r.rows[0];
+  if (durationMinutes < p.min_booking_minutes) {
+    const err = new Error(`Booking too short (min ${p.min_booking_minutes} minutes)`);
+    err.status = 400;
+    throw err;
+  }
+  if (durationMinutes > p.max_booking_minutes) {
+    const err = new Error(`Booking too long (max ${p.max_booking_minutes} minutes)`);
+    err.status = 400;
+    throw err;
+  }
+
+  const startMin = minutesSinceUtcMidnight(start);
+  const endMin = minutesSinceUtcMidnight(end);
+  // Require booking fully within open window (same-day UTC). Cross-midnight bookings are rejected for now.
+  if (end.getUTCFullYear() !== start.getUTCFullYear() ||
+      end.getUTCMonth() !== start.getUTCMonth() ||
+      end.getUTCDate() !== start.getUTCDate()) {
+    const err = new Error("Booking must start and end on the same UTC day");
+    err.status = 400;
+    throw err;
+  }
+  if (startMin < p.open_start_minute_utc || endMin > p.open_end_minute_utc) {
+    const err = new Error("Booking is outside parking opening hours");
+    err.status = 400;
+    throw err;
+  }
+
+  const buffered = expandWindow(start, end, p.buffer_minutes);
+  const blk = await clientOrPool.query(
+    `SELECT 1
+     FROM parking_blackouts
+     WHERE parking_id = $1
+       AND start_at < $3
+       AND end_at > $2
+     LIMIT 1`,
+    [parkingId, buffered.start.toISOString(), buffered.end.toISOString()]
+  );
+  if (blk.rowCount > 0) {
+    const err = new Error("Parking is unavailable (blackout period)");
+    err.status = 409;
+    throw err;
+  }
+
+  return p; // includes buffer_minutes etc.
+}
+
 async function getBookingForAuth(bookingId) {
   // include parking owner to allow parking OWNER access, and booking user_id for user access
   const r = await pool.query(
@@ -133,6 +211,9 @@ router.post("/quote", requireAuth, async (req, res, next) => {
     if (parkingRes.rowCount === 0) {
       return res.status(404).json({ error: "Parking not found" });
     }
+
+    // schedule rules (min/max/opening/blackouts)
+    await validateParkingSchedule(pool, parking_id, start, end, durationMinutes);
 
     const tierRes = await pool.query(
       `SELECT max_minutes, price_pence, currency
@@ -427,7 +508,7 @@ router.post("/", requireAuth, async (req, res, next) => {
 
     // Lock the parking row so two requests don't oversell capacity at the same time
     const parkingRes = await client.query(
-      `SELECT id, capacity, currency
+      `SELECT id, capacity, currency, buffer_minutes
        FROM parkings
        WHERE id = $1 AND is_active = true
        FOR UPDATE`,
@@ -439,6 +520,10 @@ router.post("/", requireAuth, async (req, res, next) => {
       return res.status(404).json({ error: "Parking not found" });
     }
 
+    // schedule rules (min/max/opening/blackouts) using same transaction client
+    const schedule = await validateParkingSchedule(client, parking_id, start, end, durationMinutes);
+    const buffered = expandWindow(start, end, schedule.buffer_minutes);
+
     // Prevent same user overlapping booking at same parking (friendly error)
     const dupRes = await client.query(
       `SELECT 1
@@ -449,7 +534,7 @@ router.post("/", requireAuth, async (req, res, next) => {
      AND start_at < $4
      AND end_at > $3
    LIMIT 1`,
-      [userId, parking_id, start.toISOString(), end.toISOString()]
+      [userId, parking_id, buffered.start.toISOString(), buffered.end.toISOString()]
     );
 
     if (dupRes.rowCount > 0) {
@@ -494,7 +579,7 @@ router.post("/", requireAuth, async (req, res, next) => {
          AND status IN ('PENDING', 'CONFIRMED')
          AND start_at < $3
          AND end_at > $2`,
-      [parking_id, start.toISOString(), end.toISOString()]
+      [parking_id, buffered.start.toISOString(), buffered.end.toISOString()]
     );
 
     const bookedCount = countRes.rows[0].booked_count;

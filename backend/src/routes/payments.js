@@ -2,10 +2,11 @@ const express = require("express");
 const router = express.Router();
 const { pool } = require("../config/db");
 const { stripe } = require("../config/stripe");
+const { requireAuth } = require("../middleware/auth");
 
 // POST /api/payments/create-intent
 // body: { booking_id }
-router.post("/create-intent", async (req, res, next) => {
+router.post("/create-intent", requireAuth, async (req, res, next) => {
   const client = await pool.connect();
   try {
     const { booking_id } = req.body;
@@ -16,9 +17,17 @@ router.post("/create-intent", async (req, res, next) => {
 
     // Lock booking row to avoid double-intent creation races
     const bRes = await client.query(
-      `SELECT id, status, total_amount_pence, currency, stripe_payment_intent_id
-       FROM bookings
-       WHERE id = $1
+      `SELECT b.id,
+              b.user_id,
+              b.parking_id,
+              b.status,
+              b.total_amount_pence,
+              b.currency,
+              b.stripe_payment_intent_id,
+              p.owner_user_id AS parking_owner_user_id
+       FROM bookings b
+       JOIN parkings p ON p.id = b.parking_id
+       WHERE b.id = $1
        FOR UPDATE`,
       [booking_id]
     );
@@ -29,6 +38,19 @@ router.post("/create-intent", async (req, res, next) => {
     }
 
     const booking = bRes.rows[0];
+
+    // AuthZ: booking owner OR parking owner (approved) OR admin
+    const canAccess =
+      req.user.role === "ADMIN" ||
+      booking.user_id === req.user.id ||
+      (req.user.role === "OWNER" &&
+        req.user.is_approved === true &&
+        booking.parking_owner_user_id === req.user.id);
+
+    if (!canAccess) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "Forbidden" });
+    }
 
     if (booking.status !== "PENDING") {
       await client.query("ROLLBACK");

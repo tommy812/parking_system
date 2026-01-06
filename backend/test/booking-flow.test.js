@@ -321,6 +321,7 @@ describe("Booking flow", () => {
 
     const pay = await request(app)
       .post("/api/payments/create-intent")
+      .set("Authorization", `Bearer ${token}`)
       .send({ booking_id: bookingId });
 
     expect(pay.statusCode).toBe(409);
