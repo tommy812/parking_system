@@ -12,7 +12,7 @@ function makeWindow({ daysAhead = 2, startHourUtc = 10, durationMinutes = 60 } =
 
 describe("Booking flow", () => {
   let parkingId;
-  let userId;
+  let token;
 
   beforeAll(async () => {
     // Create an isolated parking for this suite, with pricing tiers, so other tests can't break us.
@@ -34,13 +34,11 @@ describe("Booking flow", () => {
       [parkingId]
     );
 
-    const u = await pool.query(
-      `INSERT INTO users (email, password_hash, role)
-       VALUES ('test@example.com', 'x', 'USER')
-       ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
-       RETURNING id`
-    );
-    userId = u.rows[0].id;
+    const email = `test${Date.now()}@example.com`;
+    const password = "password123";
+    const reg = await request(app).post("/api/users/register").send({ email, password });
+    expect(reg.statusCode).toBe(201);
+    token = reg.body.token;
   });
 
   // IMPORTANT: keep tests isolated (especially after adding overlap constraint)
@@ -80,23 +78,28 @@ describe("Booking flow", () => {
 
   test("quote returns a price", async () => {
     const { start_at, end_at } = makeWindow({ daysAhead: 2, startHourUtc: 10, durationMinutes: 60 });
-    const res = await request(app).post("/api/bookings/quote").send({
-      parking_id: parkingId,
-      start_at,
-      end_at,
-    });
+    const res = await request(app)
+      .post("/api/bookings/quote")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at,
+        end_at,
+      });
     expect(res.statusCode).toBe(200);
     expect(res.body).toHaveProperty("price_pence");
   });
 
   test("create booking returns 201 and PENDING", async () => {
     const { start_at, end_at } = makeWindow({ daysAhead: 3, startHourUtc: 11, durationMinutes: 60 });
-    const res = await request(app).post("/api/bookings").send({
-      user_id: userId,
-      parking_id: parkingId,
-      start_at,
-      end_at,
-    });
+    const res = await request(app)
+      .post("/api/bookings")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at,
+        end_at,
+      });
 
     expect(res.statusCode).toBe(201);
     expect(res.body.booking.status).toBe("PENDING");
@@ -118,13 +121,15 @@ describe("Booking flow", () => {
     try {
       const first = await request(app)
         .post("/api/bookings")
-        .send({ user_id: userId, parking_id: parkingId, start_at, end_at });
+        .set("Authorization", `Bearer ${token}`)
+        .send({ parking_id: parkingId, start_at, end_at });
 
       expect(first.statusCode).toBe(201);
 
       const second = await request(app)
         .post("/api/bookings")
-        .send({ user_id: userId, parking_id: parkingId, start_at, end_at });
+        .set("Authorization", `Bearer ${token}`)
+        .send({ parking_id: parkingId, start_at, end_at });
 
       // This 409 may come either from capacity OR from "same user overlap" rule.
       expect(second.statusCode).toBe(409);
@@ -153,34 +158,41 @@ describe("Booking flow", () => {
 
   test("cancel booking sets status CANCELLED", async () => {
     const { start_at, end_at } = makeWindow({ daysAhead: 6, startHourUtc: 10, durationMinutes: 60 });
-    const create = await request(app).post("/api/bookings").send({
-      user_id: userId,
-      parking_id: parkingId,
-      start_at,
-      end_at,
-    });
+    const create = await request(app)
+      .post("/api/bookings")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at,
+        end_at,
+      });
 
     expect(create.statusCode).toBe(201);
     const bookingId = create.body.booking.id;
 
-    const cancel = await request(app).post(`/api/bookings/${bookingId}/cancel`);
+    const cancel = await request(app)
+      .post(`/api/bookings/${bookingId}/cancel`)
+      .set("Authorization", `Bearer ${token}`);
     expect(cancel.statusCode).toBe(200);
     expect(cancel.body.booking.status).toBe("CANCELLED");
 
     // idempotent: cancelling again should still be 200
-    const cancelAgain = await request(app).post(
-      `/api/bookings/${bookingId}/cancel`
-    );
+    const cancelAgain = await request(app)
+      .post(`/api/bookings/${bookingId}/cancel`)
+      .set("Authorization", `Bearer ${token}`);
     expect(cancelAgain.statusCode).toBe(200);
   });
 
   test("quote 60 minutes returns £2 (200 pence)", async () => {
     const { start_at, end_at } = makeWindow({ daysAhead: 10, startHourUtc: 10, durationMinutes: 60 });
-    const res = await request(app).post("/api/bookings/quote").send({
-      parking_id: parkingId,
-      start_at,
-      end_at,
-    });
+    const res = await request(app)
+      .post("/api/bookings/quote")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at,
+        end_at,
+      });
 
     expect(res.statusCode).toBe(200);
     expect(res.body.price_pence).toBe(200);
@@ -188,11 +200,14 @@ describe("Booking flow", () => {
 
   test("quote 240 minutes returns £3 (300 pence)", async () => {
     const { start_at, end_at } = makeWindow({ daysAhead: 10, startHourUtc: 10, durationMinutes: 240 });
-    const res = await request(app).post("/api/bookings/quote").send({
-      parking_id: parkingId,
-      start_at,
-      end_at,
-    });
+    const res = await request(app)
+      .post("/api/bookings/quote")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at,
+        end_at,
+      });
 
     expect(res.statusCode).toBe(200);
     expect(res.body.price_pence).toBe(300);
@@ -200,23 +215,28 @@ describe("Booking flow", () => {
 
   test("quote with invalid dates returns 400", async () => {
     const { end_at } = makeWindow({ daysAhead: 10, startHourUtc: 10, durationMinutes: 60 });
-    const res = await request(app).post("/api/bookings/quote").send({
-      parking_id: parkingId,
-      start_at: "not-a-date",
-      end_at,
-    });
+    const res = await request(app)
+      .post("/api/bookings/quote")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at: "not-a-date",
+        end_at,
+      });
 
     expect(res.statusCode).toBe(400);
   });
 
   test("create booking with end before start returns 400", async () => {
     const { start_at, end_at } = makeWindow({ daysAhead: 10, startHourUtc: 10, durationMinutes: 60 });
-    const res = await request(app).post("/api/bookings").send({
-      user_id: userId,
-      parking_id: parkingId,
-      start_at: end_at,
-      end_at: start_at,
-    });
+    const res = await request(app)
+      .post("/api/bookings")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at: end_at,
+        end_at: start_at,
+      });
 
     expect(res.statusCode).toBe(400);
   });
@@ -236,26 +256,29 @@ describe("Booking flow", () => {
     try {
       const first = await request(app)
         .post("/api/bookings")
-        .send({ user_id: userId, parking_id: parkingId, start_at, end_at });
+        .set("Authorization", `Bearer ${token}`)
+        .send({ parking_id: parkingId, start_at, end_at });
 
       expect(first.statusCode).toBe(201);
       const bookingId = first.body.booking.id;
 
       const second = await request(app)
         .post("/api/bookings")
-        .send({ user_id: userId, parking_id: parkingId, start_at, end_at });
+        .set("Authorization", `Bearer ${token}`)
+        .send({ parking_id: parkingId, start_at, end_at });
 
       expect(second.statusCode).toBe(409);
 
-      const cancel = await request(app).post(
-        `/api/bookings/${bookingId}/cancel`
-      );
+      const cancel = await request(app)
+        .post(`/api/bookings/${bookingId}/cancel`)
+        .set("Authorization", `Bearer ${token}`);
       expect(cancel.statusCode).toBe(200);
       expect(cancel.body.booking.status).toBe("CANCELLED");
 
       const third = await request(app)
         .post("/api/bookings")
-        .send({ user_id: userId, parking_id: parkingId, start_at, end_at });
+        .set("Authorization", `Bearer ${token}`)
+        .send({ parking_id: parkingId, start_at, end_at });
 
       expect(third.statusCode).toBe(201);
     } finally {
@@ -280,16 +303,20 @@ describe("Booking flow", () => {
 
   test("cannot create payment intent for CANCELLED booking", async () => {
     const { start_at, end_at } = makeWindow({ daysAhead: 13, startHourUtc: 10, durationMinutes: 60 });
-    const created = await request(app).post("/api/bookings").send({
-      user_id: userId,
-      parking_id: parkingId,
-      start_at,
-      end_at,
-    });
+    const created = await request(app)
+      .post("/api/bookings")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at,
+        end_at,
+      });
     expect(created.statusCode).toBe(201);
     const bookingId = created.body.booking.id;
 
-    const cancel = await request(app).post(`/api/bookings/${bookingId}/cancel`);
+    const cancel = await request(app)
+      .post(`/api/bookings/${bookingId}/cancel`)
+      .set("Authorization", `Bearer ${token}`);
     expect(cancel.statusCode).toBe(200);
 
     const pay = await request(app)
@@ -302,23 +329,27 @@ describe("Booking flow", () => {
   test("same user cannot create overlapping booking at same parking (409)", async () => {
     const firstWindow = makeWindow({ daysAhead: 20, startHourUtc: 10, durationMinutes: 60 });
 
-    const first = await request(app).post("/api/bookings").send({
-      user_id: userId,
-      parking_id: parkingId,
-      start_at: firstWindow.start_at,
-      end_at: firstWindow.end_at,
-    });
+    const first = await request(app)
+      .post("/api/bookings")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at: firstWindow.start_at,
+        end_at: firstWindow.end_at,
+      });
     expect(first.statusCode).toBe(201);
 
     const overlappingStart = new Date(firstWindow.start_at);
     overlappingStart.setUTCMinutes(overlappingStart.getUTCMinutes() + 30);
     const overlappingEnd = new Date(overlappingStart.getTime() + 60 * 60 * 1000);
-    const second = await request(app).post("/api/bookings").send({
-      user_id: userId,
-      parking_id: parkingId,
-      start_at: overlappingStart.toISOString(),
-      end_at: overlappingEnd.toISOString(),
-    });
+    const second = await request(app)
+      .post("/api/bookings")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        parking_id: parkingId,
+        start_at: overlappingStart.toISOString(),
+        end_at: overlappingEnd.toISOString(),
+      });
     expect(second.statusCode).toBe(409);
   });
 });

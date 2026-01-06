@@ -3,6 +3,7 @@ const router = express.Router();
 const { pool } = require("../config/db");
 const { stripe } = require("../config/stripe");
 const { env } = require("../config/env");
+const { requireAuth, requireRole } = require("../middleware/auth");
 
 function parseIsoDate(value, fieldName) {
   const d = new Date(value);
@@ -51,7 +52,40 @@ function validateBookingDates(start, end) {
   }
 }
 
-router.post("/quote", async (req, res, next) => {
+async function getBookingForAuth(bookingId) {
+  // include parking owner to allow parking OWNER access, and booking user_id for user access
+  const r = await pool.query(
+    `SELECT b.id,
+            b.user_id,
+            b.parking_id,
+            b.status,
+            b.start_at,
+            b.end_at,
+            b.total_amount_pence,
+            b.currency,
+            b.stripe_payment_intent_id,
+            b.created_at,
+            b.updated_at,
+            p.owner_user_id AS parking_owner_user_id
+     FROM bookings b
+     JOIN parkings p ON p.id = b.parking_id
+     WHERE b.id = $1`,
+    [bookingId]
+  );
+  return r;
+}
+
+function canAccessBooking(reqUser, bookingRow) {
+  if (!reqUser) return false;
+  if (reqUser.role === "ADMIN") return true;
+  if (bookingRow.user_id === reqUser.id) return true;
+  if (reqUser.role === "OWNER" && reqUser.is_approved === true) {
+    return bookingRow.parking_owner_user_id === reqUser.id;
+  }
+  return false;
+}
+
+router.post("/quote", requireAuth, async (req, res, next) => {
   try {
     const { parking_id, start_at, end_at } = req.body;
 
@@ -92,7 +126,7 @@ router.post("/quote", async (req, res, next) => {
     const parkingRes = await pool.query(
       `SELECT id, currency
        FROM parkings
-       WHERE id = $1`,
+       WHERE id = $1 AND is_active = true`,
       [parking_id]
     );
 
@@ -132,17 +166,69 @@ router.post("/quote", async (req, res, next) => {
   }
 });
 
-router.get("/:id", async (req, res, next) => {
+// GET /api/bookings -> list all bookings (ADMIN only)
+router.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
   try {
-    const { id } = req.params;
     const r = await pool.query(
       `SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
        FROM bookings
-       WHERE id = $1`,
-      [id]
+       ORDER BY created_at DESC`
     );
-    if (r.rowCount === 0)
-      return res.status(404).json({ error: "Booking not found" });
+    res.json(r.rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// GET /api/bookings/mine -> list my bookings (USER/OWNER/ADMIN)
+router.get("/mine", requireAuth, async (req, res, next) => {
+  try {
+    // For OWNER: show bookings for their parkings; For USER: show their bookings; For ADMIN: show all.
+    if (req.user.role === "ADMIN") {
+      const r = await pool.query(
+        `SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
+         FROM bookings
+         ORDER BY created_at DESC`
+      );
+      return res.json({ bookings: r.rows });
+    }
+
+    if (req.user.role === "OWNER") {
+      if (req.user.is_approved !== true) {
+        return res.status(403).json({ error: "Owner account pending admin approval" });
+      }
+      const r = await pool.query(
+        `SELECT b.id, b.user_id, b.parking_id, b.status, b.start_at, b.end_at, b.total_amount_pence, b.currency, b.stripe_payment_intent_id, b.created_at, b.updated_at
+         FROM bookings b
+         JOIN parkings p ON p.id = b.parking_id
+         WHERE p.owner_user_id = $1
+         ORDER BY b.created_at DESC`,
+        [req.user.id]
+      );
+      return res.json({ bookings: r.rows });
+    }
+
+    const r = await pool.query(
+      `SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
+       FROM bookings
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+    return res.json({ bookings: r.rows });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get("/:id", requireAuth, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const r = await getBookingForAuth(id);
+    if (r.rowCount === 0) return res.status(404).json({ error: "Booking not found" });
+    if (!canAccessBooking(req.user, r.rows[0])) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
     res.json({ booking: r.rows[0] });
   } catch (e) {
     next(e);
@@ -150,9 +236,15 @@ router.get("/:id", async (req, res, next) => {
 });
 
 // POST /api/bookings/:id/cancel
-router.post("/:id/cancel", async (req, res, next) => {
+router.post("/:id/cancel", requireAuth, async (req, res, next) => {
   try {
     const { id } = req.params;
+
+    const authRes = await getBookingForAuth(id);
+    if (authRes.rowCount === 0) return res.status(404).json({ error: "Booking not found" });
+    if (!canAccessBooking(req.user, authRes.rows[0])) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
 
     const r = await pool.query(
       `UPDATE bookings
@@ -195,7 +287,7 @@ router.post("/:id/cancel", async (req, res, next) => {
   }
 });
 // POST /api/bookings/:id/sync-payment
-router.post("/:id/sync-payment", async (req, res, next) => {
+router.post("/:id/sync-payment", requireAuth, async (req, res, next) => {
   const client = await pool.connect();
   try {
     const { id } = req.params;
@@ -203,9 +295,15 @@ router.post("/:id/sync-payment", async (req, res, next) => {
     await client.query("BEGIN");
 
     const bRes = await client.query(
-      `SELECT id, status, stripe_payment_intent_id
-       FROM bookings
-       WHERE id = $1
+      `SELECT b.id,
+              b.user_id,
+              b.parking_id,
+              b.status,
+              b.stripe_payment_intent_id,
+              p.owner_user_id AS parking_owner_user_id
+       FROM bookings b
+       JOIN parkings p ON p.id = b.parking_id
+       WHERE b.id = $1
        FOR UPDATE`,
       [id]
     );
@@ -216,6 +314,11 @@ router.post("/:id/sync-payment", async (req, res, next) => {
     }
 
     const booking = bRes.rows[0];
+
+    if (!canAccessBooking(req.user, booking)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "Forbidden" });
+    }
 
     if (!booking.stripe_payment_intent_id) {
       await client.query("ROLLBACK");
@@ -291,15 +394,17 @@ router.post("/:id/sync-payment", async (req, res, next) => {
 });
 
 // POST /api/bookings
-router.post("/", async (req, res, next) => {
+router.post("/", requireAuth, async (req, res, next) => {
   const client = await pool.connect();
   try {
-    const { user_id, parking_id, start_at, end_at } = req.body;
+    const { parking_id, start_at, end_at } = req.body;
+    const requestedUserId = req.body.user_id;
 
-    if (!user_id || !parking_id) {
-      return res
-        .status(400)
-        .json({ error: "user_id and parking_id are required" });
+    const userId =
+      req.user.role === "ADMIN" && requestedUserId ? String(requestedUserId) : req.user.id;
+
+    if (!parking_id) {
+      return res.status(400).json({ error: "parking_id is required" });
     }
 
     const start = parseIsoDate(start_at, "start_at");
@@ -324,7 +429,7 @@ router.post("/", async (req, res, next) => {
     const parkingRes = await client.query(
       `SELECT id, capacity, currency
        FROM parkings
-       WHERE id = $1
+       WHERE id = $1 AND is_active = true
        FOR UPDATE`,
       [parking_id]
     );
@@ -344,7 +449,7 @@ router.post("/", async (req, res, next) => {
      AND start_at < $4
      AND end_at > $3
    LIMIT 1`,
-      [user_id, parking_id, start.toISOString(), end.toISOString()]
+      [userId, parking_id, start.toISOString(), end.toISOString()]
     );
 
     if (dupRes.rowCount > 0) {
@@ -411,7 +516,7 @@ router.post("/", async (req, res, next) => {
         ($1, $2, $3, $4, 'PENDING', $5, $6)
        RETURNING id, user_id, parking_id, start_at, end_at, status, total_amount_pence, currency, created_at, updated_at`,
       [
-        user_id,
+        userId,
         parking_id,
         start.toISOString(),
         end.toISOString(),
@@ -444,20 +549,6 @@ router.post("/", async (req, res, next) => {
     next(e);
   } finally {
     client.release();
-  }
-});
-
-// GET /api/bookings -> list bookings
-router.get("/", async (req, res, next) => {
-  try {
-    const r = await pool.query(
-      `SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
-       FROM bookings
-       ORDER BY created_at DESC`
-    );
-    res.json(r.rows);
-  } catch (e) {
-    next(e);
   }
 });
 
