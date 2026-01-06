@@ -22,7 +22,7 @@ function diffMinutes(start, end) {
 
 function validateBookingDates(start, end) {
   const now = new Date();
-  
+
   // Prevent bookings in the past
   if (start < now) {
     const err = new Error("start_at cannot be in the past");
@@ -33,7 +33,7 @@ function validateBookingDates(start, end) {
   // Prevent bookings too far in the future
   const maxBookingDate = new Date(now);
   maxBookingDate.setDate(maxBookingDate.getDate() + env.MAX_BOOKING_DAYS_AHEAD);
-  
+
   if (start > maxBookingDate) {
     const err = new Error(
       `start_at cannot be more than ${env.MAX_BOOKING_DAYS_AHEAD} days in the future`
@@ -50,8 +50,6 @@ function validateBookingDates(start, end) {
     throw err;
   }
 }
-
-
 
 router.post("/quote", async (req, res, next) => {
   try {
@@ -83,7 +81,9 @@ router.post("/quote", async (req, res, next) => {
     try {
       validateBookingDates(start, end);
     } catch (validationError) {
-      return res.status(validationError.status || 400).json({ error: validationError.message });
+      return res
+        .status(validationError.status || 400)
+        .json({ error: validationError.message });
     }
 
     const durationMinutes = Math.ceil((end - start) / (1000 * 60));
@@ -141,7 +141,8 @@ router.get("/:id", async (req, res, next) => {
        WHERE id = $1`,
       [id]
     );
-    if (r.rowCount === 0) return res.status(404).json({ error: "Booking not found" });
+    if (r.rowCount === 0)
+      return res.status(404).json({ error: "Booking not found" });
     res.json({ booking: r.rows[0] });
   } catch (e) {
     next(e);
@@ -170,7 +171,7 @@ router.post("/:id/cancel", async (req, res, next) => {
 
     // If not updated, booking might not exist OR is already cancelled/expired
     const check = await pool.query(
-      `SELECT id, status
+      `SELECT id, user_id, parking_id, start_at, end_at, status, total_amount_pence, currency, created_at, updated_at
        FROM bookings
        WHERE id = $1`,
       [id]
@@ -180,7 +181,11 @@ router.post("/:id/cancel", async (req, res, next) => {
       return res.status(404).json({ error: "Booking not found" });
     }
 
-    // Idempotent behavior: already cancelled/expired → return current status
+    // Idempotent behavior: cancelling an already-cancelled booking returns 200
+    if (check.rows[0].status === "CANCELLED") {
+      return res.json({ booking: check.rows[0] });
+    }
+
     return res.status(409).json({
       error: `Booking cannot be cancelled in status=${check.rows[0].status}`,
       booking: { id: check.rows[0].id, status: check.rows[0].status },
@@ -306,8 +311,9 @@ router.post("/", async (req, res, next) => {
     try {
       validateBookingDates(start, end);
     } catch (validationError) {
-      await client.query("ROLLBACK");
-      return res.status(validationError.status || 400).json({ error: validationError.message });
+      return res
+        .status(validationError.status || 400)
+        .json({ error: validationError.message });
     }
 
     const durationMinutes = diffMinutes(start, end);
@@ -326,6 +332,27 @@ router.post("/", async (req, res, next) => {
     if (parkingRes.rowCount === 0) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Parking not found" });
+    }
+
+    // Prevent same user overlapping booking at same parking (friendly error)
+    const dupRes = await client.query(
+      `SELECT 1
+   FROM bookings
+   WHERE user_id = $1
+     AND parking_id = $2
+     AND status IN ('PENDING', 'CONFIRMED')
+     AND start_at < $4
+     AND end_at > $3
+   LIMIT 1`,
+      [user_id, parking_id, start.toISOString(), end.toISOString()]
+    );
+
+    if (dupRes.rowCount > 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error:
+          "You already have an active booking for this parking in that time range",
+      });
     }
 
     const { capacity, currency } = parkingRes.rows[0];
@@ -406,6 +433,14 @@ router.post("/", async (req, res, next) => {
     try {
       await client.query("ROLLBACK");
     } catch {}
+    if (e && e.code === "23P01") {
+      return res.status(409).json({
+        error: "Overlapping booking not allowed for this user at this parking",
+      });
+    }
+    if (e && e.status) {
+      return res.status(e.status).json({ error: e.message });
+    }
     next(e);
   } finally {
     client.release();
@@ -424,6 +459,6 @@ router.get("/", async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-}); 
+});
 
 module.exports = router;

@@ -8,6 +8,8 @@ const env = {
   STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || "",
   STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || "",
   JWT_SECRET: process.env.JWT_SECRET || "dev-only-change-me",
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "7d",
+  BCRYPT_ROUNDS: Number(process.env.BCRYPT_ROUNDS || 10),
   BOOKING_HOLD_MINUTES: Number(process.env.BOOKING_HOLD_MINUTES || 15),
   MAX_BOOKING_DAYS_AHEAD: Number(process.env.MAX_BOOKING_DAYS_AHEAD || 30),
 };
