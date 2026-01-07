@@ -1,11 +1,28 @@
-# env
-.env
-
-# node
+# =====================
+# Dependencies
+# =====================
 node_modules/
+**/node_modules/
 
-# docker
+dist/
+build/
+coverage/
+
+# =====================
+# Environment variables
+# =====================
+.env
+.env.*
+**/.env
+**/.env.*
+
+# =====================
+# Logs
+# =====================
 *.log
 
-# misc
+# =====================
+# OS / Editor
+# =====================
 .DS_Store
+Thumbs.db
