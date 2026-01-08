@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Stripe Elements Test</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+      body { font-family: Arial, sans-serif; max-width: 720px; margin: 40px auto; }
+      input { width: 100%; padding: 8px; margin: 6px 0; }
+      button { padding: 10px 14px; margin-top: 10px; }
+      #payment-element { margin-top: 12px; }
+      pre { background: #f6f6f6; padding: 12px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h2>Pay for Booking (Test)</h2>
+
+    <label>Booking ID</label>
+    <input id="bookingId" placeholder="paste booking UUID (PENDING)" />
+
+    <button id="start">Start payment</button>
+
+    <form id="payment-form" style="display:none;">
+      <div id="payment-element"></div>
+      <button id="submit" type="submit">Pay</button>
+    </form>
+
+    <h3>Output</h3>
+    <pre id="out"></pre>
+
+    <script>
+      const out = (x) => (document.getElementById("out").textContent = JSON.stringify(x, null, 2));
+
+      async function api(path, method = "GET", body) {
+        const res = await fetch("http://localhost:3001" + path, {
+          method,
+          headers: body ? { "Content-Type": "application/json" } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const text = await res.text();
+        let json;
+        try { json = JSON.parse(text); } catch { json = { raw: text }; }
+        if (!res.ok) throw { status: res.status, body: json };
+        return json;
+      }
+
+      let stripe, elements;
+
+      document.getElementById("start").onclick = async () => {
+        try {
+          const cfg = await api("/api/stripe/config");
+          stripe = Stripe(cfg.publishableKey);
+
+          const booking_id = document.getElementById("bookingId").value.trim();
+          if (!booking_id) return out({ error: "Paste booking_id first" });
+
+          const pi = await api("/api/payments/create-intent", "POST", { booking_id });
+
+          elements = stripe.elements({ clientSecret: pi.client_secret });
+          const paymentElement = elements.create("payment");
+          paymentElement.mount("#payment-element");
+
+          document.getElementById("payment-form").style.display = "block";
+          out({ payment_intent_id: pi.payment_intent_id, note: "Use test card 4242 4242 4242 4242, any future expiry, any CVC" });
+        } catch (e) {
+          out(e);
+        }
+      };
+
+      document.getElementById("payment-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try {
+          const result = await stripe.confirmPayment({
+            elements,
+            confirmParams: {
+              // no redirect needed for card payments in test
+              return_url: "http://localhost:3001",
+            },
+            redirect: "if_required",
+          });
+
+          out(result);
+        } catch (e2) {
+          out(e2);
+        }
+      });
+    </script>
+  </body>
+</html>

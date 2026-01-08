@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Stripe Pay Test</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+      body { font-family: Arial, sans-serif; max-width: 680px; margin: 40px auto; }
+      input { width: 100%; padding: 8px; margin: 6px 0; }
+      button { padding: 10px 14px; }
+      pre { background: #f6f6f6; padding: 12px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h2>Parking Payment (Test)</h2>
+
+    <label>User ID</label>
+    <input id="userId" placeholder="d01aac28-b4b5-4b45-a45a-1b50399c607f" />
+
+    <label>Parking ID</label>
+    <input id="parkingId" placeholder="ca29c6fa-6219-4f33-a4d7-7bc8b0d34d1e" />
+
+    <label>Start (ISO)</label>
+    <input id="startAt" value="2026-01-07T10:00:00Z" />
+
+    <label>End (ISO)</label>
+    <input id="endAt" value="2026-01-07T11:00:00Z" />
+
+    <button id="payBtn">Create booking + Pay (test)</button>
+
+    <h3>Output</h3>
+    <pre id="out"></pre>
+
+    <script>
+      const out = (x) => (document.getElementById("out").textContent = JSON.stringify(x, null, 2));
+
+      async function api(path, method = "GET", body) {
+        const res = await fetch("http://localhost:3001" + path, {
+          method,
+          headers: body ? { "Content-Type": "application/json" } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const text = await res.text();
+        let json;
+        try { json = JSON.parse(text); } catch { json = { raw: text }; }
+        if (!res.ok) throw { status: res.status, body: json };
+        return json;
+      }
+
+      document.getElementById("payBtn").onclick = async () => {
+        try {
+          // 1) Get publishable key
+          const cfg = await api("/api/stripe/config");
+          const stripe = Stripe(cfg.publishableKey);
+
+          const user_id = document.getElementById("userId").value.trim();
+          const parking_id = document.getElementById("parkingId").value.trim();
+          const start_at = document.getElementById("startAt").value.trim();
+          const end_at = document.getElementById("endAt").value.trim();
+
+          // 2) Create booking (PENDING)
+          const created = await api("/api/bookings", "POST", { user_id, parking_id, start_at, end_at });
+          const booking_id = created.booking.id;
+
+          // 3) Create payment intent
+          const pi = await api("/api/payments/create-intent", "POST", { booking_id });
+
+          // 4) Confirm payment (test card: 4242 4242 4242 4242, any future expiry, any CVC)
+          const result = await stripe.confirmCardPayment(pi.client_secret, {
+            payment_method: {
+              card: { token: "tok_visa" }
+            }
+          });
+
+          // NOTE: token-based confirm is a shortcut; if Stripe rejects it in your account,
+          // we’ll switch to Elements (still quick).
+          out({ created_booking: created, payment_intent: pi, confirm_result: result });
+        } catch (e) {
+          out(e);
+        }
+      };
+    </script>
+  </body>
+</html>
