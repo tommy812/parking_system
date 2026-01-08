@@ -7,9 +7,9 @@
 
 INSERT INTO users (email, password_hash, role, is_approved)
 VALUES
-  ('user@ex.com',  '<PASTE_BCRYPT_HASH_HERE>', 'USER',  true),
-  ('owner@ex.com', '<PASTE_BCRYPT_HASH_HERE>', 'OWNER', true),
-  ('admin@ex.com', '<PASTE_BCRYPT_HASH_HERE>', 'ADMIN', true)
+  ('user@ex.com',  '$2b$10$9fbx.wv6L7MWOzGlHjZUmO53lvlCASpzUkaVGJsQIl2rm/mbsZ4MS', 'USER',  true),
+  ('owner@ex.com', '$2b$10$9fbx.wv6L7MWOzGlHjZUmO53lvlCASpzUkaVGJsQIl2rm/mbsZ4MS', 'OWNER', true),
+  ('admin@ex.com', '$2b$10$9fbx.wv6L7MWOzGlHjZUmO53lvlCASpzUkaVGJsQIl2rm/mbsZ4MS', 'ADMIN', true)
 ON CONFLICT (email) DO UPDATE
 SET role = EXCLUDED.role,
     is_approved = EXCLUDED.is_approved;
