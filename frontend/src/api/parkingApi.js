@@ -10,7 +10,7 @@ export const fallbackParkings = [
     imageUrl:
       "https://images.unsplash.com/photo-1506521781263-d8422e82f27a?auto=format&fit=crop&w=1200&q=80",
   },
-  {
+  { 
     id: "sample-2",
     name: "Riverside Parking",
     latitude: 51.5079,
