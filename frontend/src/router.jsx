@@ -4,6 +4,7 @@ import LandPage from "./pages/LandPage";
 import ProfilePage from "./pages/ProfilePage";
 import LogIn from "./pages/LogIn";
 import RequireAuth from "./components/RequireAuth";
+import RequireNotAuth from "./components/RequireNotAuth";
 import RequireRole from "./components/RequireRole";
 import SignUp from "./pages/SignUp";
 import BookinsPage from "./pages/BookinsPage";
@@ -21,10 +22,10 @@ export const router = createBrowserRouter([
       { path: "profile",element:(<RequireAuth> <ProfilePage /> </RequireAuth>) },
       { path: "bookings", element: (<RequireAuth> <BookinsPage /> </RequireAuth>) },
       { path: "settings", element: (<RequireAuth> <SettingsPage /> </RequireAuth>) },
-      { path: "admin", element: (<RequireRole roles={["ADMIN"]}> <AdminPage /> </RequireRole>) },
-      { path: "login", element: <LogIn /> },
-      { path: "signup", element: <SignUp /> },
+      
+      { path: "login", element: (<RequireNotAuth> <LogIn /> </RequireNotAuth>) },
+      { path: "signup", element: (<RequireNotAuth> <SignUp /> </RequireNotAuth>) },
       { path: "*", element: <NotFound /> },
     ],
-  },
+  },{ path: "admin", element: (<RequireRole roles={["ADMIN"]}> <AdminPage /> </RequireRole>) },
 ]);
