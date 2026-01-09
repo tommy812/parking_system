@@ -32,6 +32,20 @@ function signToken(user) {
   );
 }
 
+router.post("/check-email-exists", async (req, res, next) => {
+  const email = normalizeEmail(req.body.email);
+  if (!email) return res.status(400).json({ error: "email is required" });
+  const r = await pool.query(
+    `SELECT id FROM users WHERE email = $1`,
+    [email]
+  );
+  if (r.rowCount > 0) {
+    return res.json({ exists: true });
+  } else {
+    return res.json({ exists: false });
+  }
+});
+
 // GET /api/users (ADMIN only) -> list users
 router.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
   try {

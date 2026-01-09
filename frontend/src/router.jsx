@@ -11,6 +11,7 @@ import BookinsPage from "./pages/BookinsPage";
 import SettingsPage from "./pages/SettingsPage";
 import AdminPage from "./pages/admin/AdminPage";
 import NotFound from "./pages/NotFound";
+import PasswordForgot from "./pages/PasswordForgot";
 
 
 export const router = createBrowserRouter([
@@ -22,7 +23,7 @@ export const router = createBrowserRouter([
       { path: "profile",element:(<RequireAuth> <ProfilePage /> </RequireAuth>) },
       { path: "bookings", element: (<RequireAuth> <BookinsPage /> </RequireAuth>) },
       { path: "settings", element: (<RequireAuth> <SettingsPage /> </RequireAuth>) },
-      
+      { path: "password-forgot", element: (<RequireNotAuth> <PasswordForgot /> </RequireNotAuth>) },
       { path: "login", element: (<RequireNotAuth> <LogIn /> </RequireNotAuth>) },
       { path: "signup", element: (<RequireNotAuth> <SignUp /> </RequireNotAuth>) },
       { path: "*", element: <NotFound /> },
