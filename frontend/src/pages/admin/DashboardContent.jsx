@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import Card from "./Components/card";
 import Table from "./Components/table";
+import { Link } from "react-router-dom";
 
 export default function DashboardContent({ summary = {}, ownerRegistrations = [], parkings = [], users = [] }) {
   const cards = useMemo(
@@ -28,10 +29,31 @@ export default function DashboardContent({ summary = {}, ownerRegistrations = []
               <h2 className="card-title">Owner registration requests</h2>
               <p className="text-sm text-base-content/70">Latest requests with parking details</p>
             </div>
+            <div>
+              <button className="btn btn-primary"><Link to="/admin/Users">View All</Link></button>
+            </div>
           </div>
           <Table registrations={ownerRegistrations} parkings={parkings} users={users} />
         </div>
       </div>
+
+      <div className="card bg-base-100 shadow">
+        <div className="card-body">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="card-title">Owner registration requests</h2>
+              <p className="text-sm text-base-content/70">Latest requests with parking details</p>
+            </div>
+            <div>
+              <button className="btn btn-primary"><Link to="/admin/payments">View All</Link></button>
+            </div>
+          </div>
+          <Table registrations={parkings} parkings={parkings} users={users} />
+        </div>
+      </div>
+
+
     </div>
+    
   );
 }
