@@ -1,49 +1,10 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import DashboardContent from "./DashboardContent";
+import useAdminData from "./hooks/useAdminData";
 
 const AdminPage = () => {
-  // Mock data; replace with API data
-  const users = useMemo(
-    () => [
-      { id: "u1", email: "admin@ex.com", phone: "07123456789", role: "ADMIN" },
-      { id: "u2", email: "owner@ex.com", phone: "07000000000", role: "OWNER" },
-      { id: "u3", email: "user@ex.com", phone: "", role: "USER" },
-    ],
-    []
-  );
-
-  const parkings = useMemo(
-    () => [
-      { id: "p1", name: "Downtown Garage", address: "123 Main St", capacity: 120, currency: "GBP" },
-      { id: "p2", name: "Airport Long Stay", address: "Airport Rd", capacity: 400, currency: "GBP" },
-    ],
-    []
-  );
-
-  const ownerRegistrations = useMemo(
-    () => [
-      { id: "or1", user_id: "u2", parking_id: "p1", status: "PENDING", created_at: "2024-11-01T10:00:00Z" },
-      { id: "or2", user_id: "u2", parking_id: "p2", status: "PENDING", created_at: "2024-11-02T09:30:00Z" },
-    ],
-    []
-  );
-
-
-
-  const summary = useMemo(
-    () => ({
-      users: users.length,
-      owners: users.filter((u) => u.role === "OWNER").length,
-      parkings: parkings.length,
-      bookings: 142, // replace with API count
-      usersDelta: 3,
-      ownersDelta: 1,
-      parkingsDelta: 2,
-      bookingsDelta: 8,
-    }),
-    [users, parkings]
-  );
+  const { users, parkings, ownerRegistrations, summary } = useAdminData();
 
   const location = useLocation();
   const isRoot = location.pathname === "/admin";
@@ -82,7 +43,7 @@ const AdminPage = () => {
       <input id="my-drawer-4" type="checkbox" className="drawer-toggle" />
       <div className="drawer-content">
         {/* Navbar */}
-        <nav className="navbar w-screen  bg-primary text-primary-content">
+        <nav className="navbar w-full  bg-primary text-primary-content">
           <label htmlFor="my-drawer-4" aria-label="open sidebar" className="btn btn-square btn-ghost">
             {/* Sidebar toggle icon */}
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" strokeLinejoin="round" strokeLinecap="round" strokeWidth="2" fill="none" stroke="currentColor" className="my-1.5 inline-block size-4"><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"></path><path d="M9 4v16"></path><path d="M14 10l2 2l-2 2"></path></svg>
@@ -256,6 +217,31 @@ const AdminPage = () => {
                 <span className="is-drawer-close:hidden">Settings</span>
               </Link>
             </li>
+
+            <li className={"hover:bg-primary hover:text-primary-content rounded-full"}>
+              <Link className="is-drawer-close:tooltip is-drawer-close:tooltip-right" data-tip="landingPage" to="/">
+                {/* Exit icon (arrow left) */}
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="my-1.5 inline-block size-4"
+                >
+                  <path d="M15 21h4a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-4" />
+                  <path d="M8 17l-5-5 5-5" />
+                  <line x1="3" y1="12" x2="15" y2="12" />
+                </svg>
+
+
+                <span className="is-drawer-close:hidden">Exit</span>
+              </Link>
+            </li>
+
+
           </ul>
         </div>
       </div>

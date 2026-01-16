@@ -247,15 +247,49 @@ router.post("/quote", requireAuth, async (req, res, next) => {
   }
 });
 
-// GET /api/bookings -> list all bookings (ADMIN only)
+// GET /api/bookings -> list all bookings (ADMIN only) with pagination/search
 router.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
   try {
-    const r = await pool.query(
-      `SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
-       FROM bookings
-       ORDER BY created_at DESC`
-    );
-    res.json(r.rows);
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const pageSize = Math.min(Math.max(Number(req.query.page_size) || 20, 1), 100);
+    const query = req.query.query ? String(req.query.query).trim().toLowerCase() : "";
+
+    const params = [];
+    const where = ["1=1"];
+    let idx = 1;
+
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(LOWER(id::text) LIKE $${idx} OR LOWER(user_id::text) LIKE $${idx} OR LOWER(parking_id::text) LIKE $${idx})`
+      );
+      idx += 1;
+    }
+
+    const offset = (page - 1) * pageSize;
+
+    const listSql = `
+      SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
+      FROM bookings
+      WHERE ${where.join(" AND ")}
+      ORDER BY created_at DESC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `;
+
+    const countSql = `
+      SELECT COUNT(*)::int AS total
+      FROM bookings
+      WHERE ${where.join(" AND ")}
+    `;
+
+    const [listRes, countRes] = await Promise.all([pool.query(listSql, params), pool.query(countSql, params)]);
+
+    res.json({
+      bookings: listRes.rows,
+      total: countRes.rows[0].total,
+      page,
+      page_size: pageSize,
+    });
   } catch (e) {
     next(e);
   }

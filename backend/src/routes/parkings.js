@@ -83,16 +83,47 @@ router.post("/", requireAuth, requireRole(["OWNER", "ADMIN"]), async (req, res, 
 });
 
 
-// GET /api/parkings  -> list parkings
+// GET /api/parkings  -> list parkings with optional pagination and query
 router.get("/", async (req, res, next) => {
   try {
-    const r = await pool.query(
-      `SELECT id, name, address, timezone, capacity, currency, image_url, owner_user_id, created_at
-       FROM parkings
-       WHERE is_active = true
-       ORDER BY created_at DESC`
-    );
-    res.json(r.rows);
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const pageSize = Math.min(Math.max(Number(req.query.page_size) || 20, 1), 100);
+    const query = req.query.query ? String(req.query.query).trim().toLowerCase() : "";
+
+    const params = [];
+    const where = ["is_active = true"];
+    let idx = 1;
+
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(`(LOWER(name) LIKE $${idx} OR LOWER(COALESCE(address,'')) LIKE $${idx})`);
+      idx += 1;
+    }
+
+    const offset = (page - 1) * pageSize;
+
+    const listSql = `
+      SELECT id, name, address, timezone, capacity, currency, image_url, owner_user_id, lat, lng,
+             open_start_minute_utc, open_end_minute_utc, min_booking_minutes, max_booking_minutes, buffer_minutes,
+             created_at
+      FROM parkings
+      WHERE ${where.join(" AND ")}
+      ORDER BY created_at DESC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `;
+
+    const countSql = `
+      SELECT COUNT(*)::int AS total
+      FROM parkings
+      WHERE ${where.join(" AND ")}
+    `;
+
+    const [listRes, countRes] = await Promise.all([
+      pool.query(listSql, params),
+      pool.query(countSql, params),
+    ]);
+
+    res.json({ parkings: listRes.rows, total: countRes.rows[0].total, page, page_size: pageSize });
   } catch (e) {
     next(e);
   }

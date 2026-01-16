@@ -10,7 +10,7 @@ const LogIn = () => {
   const [errors, setErrors] = useState({}); // { email?, password?, auth? }
   const [submitting, setSubmitting] = useState(false);
   const { login: setAuth } = useAuth();
-  const navigate = useNavigate();
+    const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     if (e) e.preventDefault();
@@ -25,8 +25,8 @@ const LogIn = () => {
     setErrors({});
     setSubmitting(true);
     try {
-      const response = await login(email, password);
-      if (response.error) {
+        const response = await login(email, password);
+        if (response.error) {
         setErrors({ auth: response.error });
         return;
       }
@@ -35,14 +35,14 @@ const LogIn = () => {
       navigate("/profile");
     } finally {
       setSubmitting(false);
-    }
+        }
   };
 
   const clearFieldError = (field) => {
     setErrors((prev) => ({ ...prev, [field]: undefined, auth: undefined }));
   };
 
-  return (
+    return (
     <div className="flex justify-center items-center min-h-[50vh] px-4">
       <form onSubmit={handleLogin} className="w-full max-w-md">
         <fieldset className="fieldset bg-base-100 rounded-box w-full border p-4 border-primary">
@@ -86,9 +86,9 @@ const LogIn = () => {
           <Link to="/signup" className="label justify-end mt-4 hover:text-primary">
             Don&apos;t have an account? Sign up
           </Link>
-        </fieldset>
+            </fieldset>
       </form>
-    </div>
+        </div>
   );
 };
 

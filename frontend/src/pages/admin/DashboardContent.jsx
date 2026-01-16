@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
-import Card from "./Components/card";
-import Table from "./Components/table";
+import Card from "./components/Card";
+import Table from "./components/Table";
 import { Link } from "react-router-dom";
 
 export default function DashboardContent({ summary = {}, ownerRegistrations = [], parkings = [], users = [] }) {

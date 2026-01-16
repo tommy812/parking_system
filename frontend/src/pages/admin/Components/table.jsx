@@ -66,3 +66,4 @@ export default function Table({ registrations = [], parkings = [], users = [] })
     </div>
   );
 }
+ 

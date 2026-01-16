@@ -97,3 +97,59 @@ export async function fetchParkings({ query, lat, lon, signal } = {}) {
   return { parkings: normalized };
 }
 
+// Admin helpers
+export async function fetchAdminParkings({ page = 1, pageSize = 12, search = "", authHeader = {} } = {}) {
+  const params = new URLSearchParams();
+  if (page) params.set("page", page);
+  if (pageSize) params.set("page_size", pageSize);
+  if (search) params.set("query", search);
+
+  const response = await fetch(
+    `${API_BASE_URL}parkings${params.toString() ? `?${params.toString()}` : ""}`,
+    {
+      headers: { "Content-Type": "application/json", ...authHeader },
+    }
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body?.error || `Failed to fetch parkings (${response.status})`);
+  }
+  return response.json();
+}
+
+export async function upsertParking({ form, authHeader = {} }) {
+  const payload = {
+    name: form.name,
+    address: form.address || null,
+    timezone: form.timezone || "Europe/London",
+    capacity: Number(form.capacity),
+    currency: form.currency || "GBP",
+    image_url: form.image_url || null,
+    owner_user_id: form.owner_user_id || null,
+  };
+
+  if (form.id) {
+    const res = await fetch(`${API_BASE_URL}/parkings/${form.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeader },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      throw new Error(body?.error || "Failed to update parking");
+    }
+    return body.parking || body;
+  }
+
+  const res = await fetch(`${API_BASE_URL}/parkings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeader },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body?.error || "Failed to create parking");
+  }
+  return body.parking || body;
+}
+
