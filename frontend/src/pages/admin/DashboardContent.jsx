@@ -1,24 +1,81 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import Card from "./components/Card";
 import Table from "./components/Table";
 import { Link } from "react-router-dom";
+import { fetchNumberofParkings } from "../../api/parkingApi";
+import { useAuth } from "../../context/AuthContext";
+import { fetchNumberOfUsers } from "../../api/userApi";
+import { fetchNumberOfOwners } from "../../api/userApi";
+import { fetchNumberOfBookings } from "../../api/bookingApi";
+
 
 export default function DashboardContent({ summary = {}, ownerRegistrations = [], parkings = [], users = [] }) {
+  const { token } = useAuth();
+  const authHeader = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
+
+  const [numberOfParkings, setNumberOfParkings] = useState(0);
+  const [numberOfUsers, setNumberOfUsers] = useState(0);
+  const [numberOfOwners, setNumberOfOwners] = useState(0);
+  const [numberOfBookings, setNumberOfBookings] = useState(0);
+
+
+  const loadNumberOfParkings = async () => {
+    try {
+      const data = await fetchNumberofParkings({ authHeader });
+      setNumberOfParkings(data.total);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+  const loadNumberOfUsers = async () => {
+    try {
+      const data = await fetchNumberOfUsers({ authHeader });
+      setNumberOfUsers(data.total);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+  const loadNumberOfOwners = async () => {
+    try {
+      const data = await fetchNumberOfOwners({ authHeader });
+      setNumberOfOwners(data.total);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const loadNumberOfBookings = async () => {
+    try {
+      const data = await fetchNumberOfBookings({ authHeader });
+      setNumberOfBookings(data.total);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  useEffect(() => {
+    loadNumberOfParkings();
+
+    loadNumberOfUsers();
+    loadNumberOfOwners();
+    loadNumberOfBookings();
+  }, [token]);
+
   const cards = useMemo(
     () => [
-      { title: "Users", value: summary.users ?? 0, delta: summary.usersDelta ?? 0 },
-      { title: "Owners", value: summary.owners ?? 0, delta: summary.ownersDelta ?? 0 },
-      { title: "Parkings", value: summary.parkings ?? 0, delta: summary.parkingsDelta ?? 0 },
-      { title: "Bookings", value: summary.bookings ?? 0, delta: summary.bookingsDelta ?? 0 },
+      { title: "Users", value: numberOfUsers ?? 0, delta: summary.usersDelta ?? 0 },
+      { title: "Owners", value: numberOfOwners ?? 0, delta: summary.ownersDelta ?? 0 },
+      { title: "Parkings", value: numberOfParkings ?? 0, delta: summary.parkingsDelta ?? 0 },
+      { title: "Bookings", value: numberOfBookings ?? 0, delta: summary.bookingsDelta ?? 0 },
     ],
-    [summary]
+    [numberOfUsers, numberOfOwners, numberOfParkings, numberOfBookings] 
   );
 
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {cards.map((c) => (
-          <Card key={c.title} title={c.title} description={c.value} badge={c.delta} />
+          <Card key={c.title} title={c.title} value={c.value} badge={c.delta} />
         ))}
       </div>
 

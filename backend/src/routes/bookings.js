@@ -247,6 +247,15 @@ router.post("/quote", requireAuth, async (req, res, next) => {
   }
 });
 
+router.get("/number", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
+  try {
+    const r = await pool.query("SELECT COUNT(*)::int AS total FROM bookings");
+    res.json({ total: r.rows[0].total });
+  } catch (e) {
+    next(e);
+  }
+});
+
 // GET /api/bookings -> list all bookings (ADMIN only) with pagination/search
 router.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
   try {

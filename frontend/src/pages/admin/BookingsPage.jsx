@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import EntryCard from "./Components/EntryCard";
 import { useAuth } from "../../context/AuthContext";
+import { fetchAdminBookings } from "../../api/bookingApi";
 
 function BookingsPage() {
   const { token } = useAuth();
@@ -9,31 +10,26 @@ function BookingsPage() {
   const [pageSize] = useState(12);
   const [total, setTotal] = useState(null);
   const [search, setSearch] = useState("");
+  const [orderFilter, setOrderFilter] = useState("latest");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const authHeader = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001/api";
   const load = async (nextPage = page) => {
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams();
-      params.set("page", nextPage);
-      params.set("page_size", pageSize);
-      if (search) params.set("query", search);
-
-      const res = await fetch(`${apiBaseUrl}/bookings?${params.toString()}`, {
-        headers: { "Content-Type": "application/json", ...authHeader },
+      const { bookings: list, total: count } = await fetchAdminBookings({
+        page: nextPage,
+        pageSize,
+        search,
+        orderFilter,
+        filter: statusFilter,
+        authHeader,
       });
-      const body = await res.json();
-      if (!res.ok) {
-        setError(body?.error || "Failed to load bookings");
-        return;
-      }
-      const list = Array.isArray(body) ? body : body?.bookings || [];
       setBookings(list);
-      setTotal(body?.total ?? null);
+      setTotal(count);
       setPage(nextPage);
     } catch (e) {
       setError(e.message || "Failed to load bookings");
@@ -45,7 +41,7 @@ function BookingsPage() {
   useEffect(() => {
     if (token) load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, search]);
+  }, [token, search, orderFilter, statusFilter]);
 
   const handlePageChange = (newPage) => {
     if (newPage < 1) return;
@@ -73,25 +69,48 @@ function BookingsPage() {
           </label>
 
           <div className="dropdown dropdown-hover">
-            <div tabIndex={0} role="button" className="btn m-1 btn-sm">Order</div>
-            <ul tabIndex="-1" className="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm">
-              <li><a>Date</a></li>
-              <li><a>Status</a></li>
-              <li><a>User</a></li>
-              <li><a>Parking</a></li>
-            </ul>
-          </div>
+                <div tabIndex={0} role="button" className="btn m-1 btn-sm">Order</div>
+                <ul tabIndex="-1" className="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm">
+                  {["latest", "oldest", "user", "name", "location"].map(o => (
+                    <li key={o}>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="order"
+                          className="radio radio-sm"
+                          checked={orderFilter === o}
+                          onChange={() => setOrderFilter(o)}
+                        />
+                        {o.charAt(0).toUpperCase() + o.slice(1)}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
 
-          <div className="dropdown dropdown-hover">
-            <div tabIndex={0} role="button" className="btn m-1 btn-sm">Filter</div>
-            <ul tabIndex="-1" className="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm">
-              <li><a><input type="checkbox" defaultChecked className="checkbox checkbox-sm" />All</a></li>
-              <li><a><input type="checkbox" className="checkbox checkbox-sm" />Pending</a></li>
-              <li><a><input type="checkbox" className="checkbox checkbox-sm" />Confirmed</a></li>
-              <li><a><input type="checkbox" className="checkbox checkbox-sm" />Cancelled</a></li>
-              <li><a><input type="checkbox" className="checkbox checkbox-sm" />Expired</a></li>
-            </ul>
-          </div>
+
+
+              <div className="dropdown dropdown-hover">
+                <div tabIndex={0} role="button" className="btn m-1 btn-sm">Filter</div>
+                <ul tabIndex="-1" className="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm">
+                  {["all", "pending", "confirmed", "cancelled", "expired"].map(s => (
+                    <li key={s}>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="status"
+                          className="radio radio-sm"
+                          checked={statusFilter === s}
+                          onChange={() => setStatusFilter(s)}
+                        />
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+       
 
         </div>
 
@@ -119,8 +138,7 @@ function BookingsPage() {
                   <div>User: {b.user_id || "—"}</div>
                   <div>Parking: {b.parking_id || "—"}</div>
                   <div>
-                    {b.start_at ? new Date(b.start_at).toLocaleString() : "—"} →{" "}
-                    {b.end_at ? new Date(b.end_at).toLocaleString() : "—"}
+                    {b.start_ats} to {b.end_at}
                   </div>
                 </div>
               }
@@ -133,7 +151,7 @@ function BookingsPage() {
         <button className="join-item btn" onClick={() => handlePageChange(page - 1)} disabled={page === 1 || loading}>
           «
         </button>
-        <button className="join-item btn">Page {page}</button>
+        <button className="join-item btn">Page {page} </button>
         <button
           className="join-item btn"
           onClick={() => handlePageChange(page + 1)}

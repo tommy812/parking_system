@@ -60,6 +60,25 @@ router.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
   }
 });
 
+router.get("/numberUsers", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
+  try {
+    const r = await pool.query("SELECT COUNT(*)::int AS total FROM users WHERE role = 'USER'");
+    res.json({ total: r.rows[0].total });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get("/numberOwners", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
+  try {
+    const r = await pool.query("SELECT COUNT(*)::int AS total FROM users WHERE role = 'OWNER'");
+    res.json({ total: r.rows[0].total });
+  } catch (e) {
+    next(e);
+  }
+});
+
+
 // GET /api/users/me -> current user
 router.get("/me", requireAuth, async (req, res, next) => {
   try {

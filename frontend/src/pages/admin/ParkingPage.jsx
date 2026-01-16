@@ -26,8 +26,9 @@ export default function ParkingPage() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(12);
   const [total, setTotal] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [orderFilter, setOrderFilter] = useState("latest");
   const [search, setSearch] = useState("");
-
   const authHeader = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
 
   const load = async (opts = {}) => {
@@ -39,6 +40,8 @@ export default function ParkingPage() {
         page: nextPage,
         pageSize,
         search,
+        orderBy: orderFilter,
+        filter: statusFilter,
         authHeader,
       });
       const list = Array.isArray(data) ? data : data?.data || data?.parkings || [];
@@ -55,7 +58,7 @@ export default function ParkingPage() {
   useEffect(() => {
     if (token) load({ page: 1 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, search]);
+  }, [token, search, orderFilter, statusFilter]);
 
   const handleChange = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -109,70 +112,128 @@ export default function ParkingPage() {
     }
   };
 
+  const totalPages = total ? Math.ceil(total / pageSize) : null;
   return (
-    <div className="space-y-6">
-      <div className="card bg-base-100 shadow">
-        <div className="card-body">
-          <div className="flex items-center justify-between">
-            <h2 className="card-title">All parkings</h2>
-            <div className="flex items-center gap-2">
-              <label className="input input-sm">
-                <svg className="h-[1em] opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                  <g strokeLinejoin="round" strokeLinecap="round" strokeWidth="2.5" fill="none" stroke="currentColor">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <path d="m21 21-4.3-4.3"></path>
-                  </g>
-                </svg>
-                <input
-                  type="search"
-                  placeholder="Search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </label>
-              {loading && <span className="loading loading-spinner" />}
-              <button className="btn btn-primary btn-sm" onClick={() => setModalOpen(true)}>
-                Add parking
-              </button>
-            </div>
-          </div>
-          {parkings.length === 0 && !loading ? (
-            <p className="text-sm text-base-content/70">No parkings found.</p>
-          ) : (
-            <div className="grid xl:grid-cols-6 md:grid-cols-4 grid-cols-1 gap-4">
-              {parkings.map((p) => (
-                <EntryCard
-                  key={p.id}
-                  title={p.name}
-                  image={p.image_url || "https://img.daisyui.com/images/stock/photo-1606107557195-0e29a4b5b4aa.webp"}
-                  active
-                  capacity={p.capacity}
-                  onClick={() => handleEdit(p)}
-                  footer={
-                    <div className="text-xs text-base-content/70">
-                      {p.address || "No address"} • {p.currency || "GBP"}
-                    </div>
-                  }
-                />
-              ))}
-            </div>
-          )}
+    <div className="max-w-full shadow p-4 rounded-lg flex flex-col gap-4 justify-around items-center">
 
-          <div className="join mt-4 justify-center">
-            <button className="join-item btn" onClick={() => load({ page: Math.max(1, page - 1) })} disabled={page === 1 || loading}>
-              «
-            </button>
-            <button className="join-item btn">Page {page}</button>
-            <button
-              className="join-item btn"
-              onClick={() => load({ page: page + 1 })}
-              disabled={loading || (total !== null && page * pageSize >= total) || (parkings.length < pageSize && total === null)}
-            >
-              »
-            </button>
+
+      <div className="w-full flex flex-wrap justify-between items-center gap-2">
+
+        <div className="flex justify-start md:gap-1 items-center gap-2">
+          <label className="input input-sm">
+            <svg className="h-[1em] opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+              <g strokeLinejoin="round" strokeLinecap="round" strokeWidth="2.5" fill="none" stroke="currentColor">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="m21 21-4.3-4.3"></path>
+              </g>
+            </svg>
+            <input
+              type="search"
+              placeholder="Search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
+
+
+
+
+          <div className="dropdown dropdown-hover">
+            <div tabIndex={0} role="button" className="btn m-1 btn-sm">Order</div>
+            <ul tabIndex="-1" className="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm">
+              {["latest", "oldest", "name", "location"].map(o => (
+                <li key={o}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="order"
+                      className="radio radio-sm"
+                      checked={orderFilter === o}
+                      onChange={() => setOrderFilter(o)}
+                    />
+                    {o.charAt(0).toUpperCase() + o.slice(1)}
+                  </label>
+                </li>
+              ))}
+            </ul>
           </div>
+
+
+
+          <div className="dropdown dropdown-hover">
+            <div tabIndex={0} role="button" className="btn m-1 btn-sm">Filter</div>
+            <ul tabIndex="-1" className="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm">
+              {["all", "active", "inactive"].map(s => (
+                <li key={s}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="status"
+                      className="radio radio-sm"
+                      checked={statusFilter === s}
+                      onChange={() => setStatusFilter(s)}
+                    />
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+
+
         </div>
+
+        <div className="flex justify-end">
+          <button className="btn btn-primary btn-sm" onClick={() => setModalOpen(true)}>
+            Add parking
+          </button>
+        </div>
+
       </div>
+
+
+      {parkings.length === 0 && !loading ? (
+        <p className="text-sm text-base-content/70">No parkings found.</p>
+      ) : (
+        <div className="grid xl:grid-cols-6 md:grid-cols-4 grid-cols-1 gap-4">
+          {parkings.map((p) => (
+            <EntryCard
+              key={p.id}
+              title={p.name}
+              image={p.image_url || "https://img.daisyui.com/images/stock/photo-1606107557195-0e29a4b5b4aa.webp"}
+              active={p.is_active}
+              capacity={p.capacity}
+              onClick={() => handleEdit(p)}
+              opening={p.open_start_minute_utc}
+              closing={p.open_end_minute_utc}
+              footer={
+                <div className="text-xs text-base-content/70">
+                  {p.address || "No address"} • {p.currency || "GBP"}
+                </div>
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="join mt-4 justify-center">
+        <button className="join-item btn" onClick={() => load({ page: Math.max(1, page - 1) })} disabled={page === 1 || loading}>
+          «
+        </button>
+        <button className="join-item btn" >
+          Page {page}{totalPages ? ` of ${totalPages}` : ""}
+        </button>
+        <button
+          className="join-item btn"
+          onClick={() => load({ page: totalPages ? Math.min(totalPages, page + 1) : page + 1 })}
+          disabled={loading || (totalPages ? page >= totalPages : false)}
+        >
+          »
+        </button>
+      </div>
+
+
 
       {/* Modal for add/edit */}
       <dialog className={`modal ${modalOpen ? "modal-open" : ""}`}>

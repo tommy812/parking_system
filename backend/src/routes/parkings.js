@@ -48,6 +48,15 @@ function toCsv(rows, headers) {
   ].join("\n");
 }
 
+router.get("/number", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
+  try {
+    const r = await pool.query("SELECT COUNT(*)::int AS total FROM parkings WHERE is_active = true");
+    res.json({ total: r.rows[0].total });
+  } catch (e) {
+    next(e);
+  }
+});
+
 // POST /api/parkings -> create a parking (OWNER or ADMIN)
 router.post("/", requireAuth, requireRole(["OWNER", "ADMIN"]), async (req, res, next) => {
   try {
@@ -89,33 +98,60 @@ router.get("/", async (req, res, next) => {
     const page = Math.max(Number(req.query.page) || 1, 1);
     const pageSize = Math.min(Math.max(Number(req.query.page_size) || 20, 1), 100);
     const query = req.query.query ? String(req.query.query).trim().toLowerCase() : "";
+    const filter = req.query.filter || "all";
+    const orderBy = req.query.order_by || "latest";
 
     const params = [];
-    const where = ["is_active = true"];
+    const where = [];
     let idx = 1;
 
+    // 🔍 search
     if (query) {
       params.push(`%${query}%`);
       where.push(`(LOWER(name) LIKE $${idx} OR LOWER(COALESCE(address,'')) LIKE $${idx})`);
-      idx += 1;
+      idx++;
     }
 
+    // ✅ active/inactive/all
+    if (filter === "active") {
+      where.push(`is_active = $${idx}`);
+      params.push(true);
+      idx++;
+    } else if (filter === "inactive") {
+      where.push(`is_active = $${idx}`);
+      params.push(false);
+      idx++;
+    }
+
+    // ✅ safe ORDER BY
+    const ORDER_MAP = {
+      latest:   "created_at DESC",
+      oldest:   "created_at ASC",
+      name:     "name ASC",
+      location: "address ASC",
+    };
+
+    const orderSql = ORDER_MAP[orderBy] || ORDER_MAP.latest;
+
     const offset = (page - 1) * pageSize;
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     const listSql = `
-      SELECT id, name, address, timezone, capacity, currency, image_url, owner_user_id, lat, lng,
-             open_start_minute_utc, open_end_minute_utc, min_booking_minutes, max_booking_minutes, buffer_minutes,
+      SELECT id, name, address, timezone, capacity, currency, image_url,
+             owner_user_id, is_active, lat, lng,
+             open_start_minute_utc, open_end_minute_utc,
+             min_booking_minutes, max_booking_minutes, buffer_minutes,
              created_at
       FROM parkings
-      WHERE ${where.join(" AND ")}
-      ORDER BY created_at DESC
+      ${whereSql}
+      ORDER BY ${orderSql}
       LIMIT ${pageSize} OFFSET ${offset}
     `;
 
     const countSql = `
       SELECT COUNT(*)::int AS total
       FROM parkings
-      WHERE ${where.join(" AND ")}
+      ${whereSql}
     `;
 
     const [listRes, countRes] = await Promise.all([
@@ -123,11 +159,17 @@ router.get("/", async (req, res, next) => {
       pool.query(countSql, params),
     ]);
 
-    res.json({ parkings: listRes.rows, total: countRes.rows[0].total, page, page_size: pageSize });
+    res.json({
+      parkings: listRes.rows,
+      total: countRes.rows[0].total,
+      page,
+      page_size: pageSize,
+    });
   } catch (e) {
     next(e);
   }
 });
+
 
 // GET /api/parkings/search
 // Query params:

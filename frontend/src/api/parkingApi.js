@@ -75,7 +75,7 @@ export async function fetchParkings({ query, lat, lon, signal } = {}) {
     params.set("lon", lon);
   }
 
-  const url = `${API_BASE_URL}/parkings${
+  const url = `${API_BASE_URL}parkings${
     params.toString() ? `?${params.toString()}` : ""
   }`;
 
@@ -97,25 +97,47 @@ export async function fetchParkings({ query, lat, lon, signal } = {}) {
   return { parkings: normalized };
 }
 
-// Admin helpers
-export async function fetchAdminParkings({ page = 1, pageSize = 12, search = "", authHeader = {} } = {}) {
+export async function fetchNumberofParkings({ authHeader = {} } = {}) {
+  const response = await fetch(`${API_BASE_URL}parkings/number`, {
+    headers: { "Content-Type": "application/json", ...authHeader },
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchAdminParkings({
+  page = 1,
+  pageSize = 12,
+  search = "",
+  orderBy = "latest",
+  filter = "all",
+  authHeader = {},
+} = {}) {
   const params = new URLSearchParams();
-  if (page) params.set("page", page);
-  if (pageSize) params.set("page_size", pageSize);
+
+  params.set("page", page);
+  params.set("page_size", pageSize);
+
   if (search) params.set("query", search);
+  if (filter && filter !== "all") params.set("filter", filter);
+  if (orderBy) params.set("order_by", orderBy); // 👈 HERE
 
   const response = await fetch(
-    `${API_BASE_URL}parkings${params.toString() ? `?${params.toString()}` : ""}`,
-    {
-      headers: { "Content-Type": "application/json", ...authHeader },
-    }
+    `${API_BASE_URL}parkings?${params.toString()}`,
+    { headers: { "Content-Type": "application/json", ...authHeader } }
   );
+
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body?.error || `Failed to fetch parkings (${response.status})`);
   }
+
   return response.json();
 }
+
+
 
 export async function upsertParking({ form, authHeader = {} }) {
   const payload = {
