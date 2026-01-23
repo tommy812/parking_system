@@ -3,13 +3,15 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { getBookingQuote, createBooking } from "../api/bookingApi";
 import { fetchParkings } from "../api/parkingApi";
+import { fetchCurrentUser } from "../api/userApi";
 import ParkingCard from "../components/ParkingCard";
 import TextField from "../components/forms/TextField";
 
 const BookingConfirmationPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { user, getAuthHeader } = useAuth();
+  const { user: contextUser, getAuthHeader, setUser } = useAuth();
+  const [user, setLocalUser] = useState(contextUser);
 
   const parkingId = searchParams.get("parking_id");
   const startAt = searchParams.get("start_at");
@@ -28,25 +30,56 @@ const BookingConfirmationPage = () => {
       return;
     }
 
-    if (!user) {
+    if (!contextUser) {
       navigate("/login");
       return;
     }
+
+    let cancelled = false;
 
     const loadData = async () => {
       try {
         setLoading(true);
         const authHeader = getAuthHeader();
 
+        if (!authHeader.Authorization) {
+          setError("Not authenticated");
+          setLoading(false);
+          return;
+        }
+
+        // Fetch full user profile to get vehicle details
+        try {
+          const fullUser = await fetchCurrentUser({ authHeader });
+          if (!cancelled) {
+            setLocalUser(fullUser);
+            // Update context user as well
+            if (setUser) {
+              setUser(fullUser);
+            }
+          }
+        } catch (userErr) {
+          console.warn("Failed to fetch user profile:", userErr);
+          // Continue with context user if fetch fails
+        }
+
+        if (cancelled) return;
+
         // Fetch parking details
         const { parkings } = await fetchParkings({});
         const foundParking = parkings.find((p) => p.id === parkingId);
         if (!foundParking) {
-          setError("Parking not found");
-          setLoading(false);
+          if (!cancelled) {
+            setError("Parking not found");
+            setLoading(false);
+          }
           return;
         }
-        setParking(foundParking);
+        if (!cancelled) {
+          setParking(foundParking);
+        }
+
+        if (cancelled) return;
 
         // Get quote
         const quoteData = await getBookingQuote({
@@ -55,17 +88,26 @@ const BookingConfirmationPage = () => {
           end_at: endAt,
           authHeader,
         });
-        setQuote(quoteData);
+        if (!cancelled) {
+          setQuote(quoteData);
+          setLoading(false);
+        }
       } catch (err) {
-        console.error(err);
-        setError(err.message || "Failed to load booking information");
-      } finally {
-        setLoading(false);
+        if (!cancelled) {
+          console.error(err);
+          setError(err.message || "Failed to load booking information");
+          setLoading(false);
+        }
       }
     };
 
     loadData();
-  }, [parkingId, startAt, endAt, user, navigate, getAuthHeader]);
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parkingId, startAt, endAt]);
 
   const formatDateTime = (isoString) => {
     if (!isoString) return "";

@@ -97,18 +97,42 @@ async function validateParkingSchedule(clientOrPool, parkingId, start, end, dura
 
   const startMin = minutesSinceUtcMidnight(start);
   const endMin = minutesSinceUtcMidnight(end);
-  // Require booking fully within open window (same-day UTC). Cross-midnight bookings are rejected for now.
-  if (end.getUTCFullYear() !== start.getUTCFullYear() ||
-      end.getUTCMonth() !== start.getUTCMonth() ||
-      end.getUTCDate() !== start.getUTCDate()) {
-    const err = new Error("Booking must start and end on the same UTC day");
-    err.status = 400;
-    throw err;
-  }
-  if (startMin < p.open_start_minute_utc || endMin > p.open_end_minute_utc) {
-    const err = new Error("Booking is outside parking opening hours");
-    err.status = 400;
-    throw err;
+  
+  // Check if booking crosses UTC midnight
+  const crossesMidnight = end.getUTCFullYear() !== start.getUTCFullYear() ||
+                          end.getUTCMonth() !== start.getUTCMonth() ||
+                          end.getUTCDate() !== start.getUTCDate();
+
+  if (crossesMidnight) {
+    // For cross-midnight bookings:
+    // 1. Start time must be after opening time on start day
+    // 2. End time must be before closing time on end day
+    // 3. Parking must be open 24/7 OR the booking must fit within the opening hours on both days
+    const is24Hours = p.open_start_minute_utc === 0 && p.open_end_minute_utc === 1440;
+    
+    if (is24Hours) {
+      // 24/7 parking - allow any cross-midnight booking
+      // No additional validation needed
+    } else {
+      // Non-24/7 parking: check that start is after opening and end is before closing
+      if (startMin < p.open_start_minute_utc) {
+        const err = new Error("Booking start time is before parking opening hours");
+        err.status = 400;
+        throw err;
+      }
+      if (endMin > p.open_end_minute_utc) {
+        const err = new Error("Booking end time is after parking closing hours");
+        err.status = 400;
+        throw err;
+      }
+    }
+  } else {
+    // Same-day booking - check both start and end are within opening hours
+    if (startMin < p.open_start_minute_utc || endMin > p.open_end_minute_utc) {
+      const err = new Error("Booking is outside parking opening hours");
+      err.status = 400;
+      throw err;
+    }
   }
 
   const buffered = expandWindow(start, end, p.buffer_minutes);
@@ -269,8 +293,28 @@ router.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
 
     if (query) {
       params.push(`%${query}%`);
+      // Search across multiple fields:
+      // - Booking ID, user ID, parking ID
+      // - Parking name
+      // - User name (first_name, last_name) and email
+      // - Price (as text)
+      // - Dates (formatted as text)
       where.push(
-        `(LOWER(id::text) LIKE $${idx} OR LOWER(user_id::text) LIKE $${idx} OR LOWER(parking_id::text) LIKE $${idx})`
+        `(
+          LOWER(b.id::text) LIKE $${idx} OR 
+          LOWER(b.user_id::text) LIKE $${idx} OR 
+          LOWER(b.parking_id::text) LIKE $${idx} OR
+          LOWER(p.name) LIKE $${idx} OR
+          LOWER(u.email) LIKE $${idx} OR
+          LOWER(COALESCE(u.first_name, '')) LIKE $${idx} OR
+          LOWER(COALESCE(u.last_name, '')) LIKE $${idx} OR
+          LOWER(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) LIKE $${idx} OR
+          LOWER(b.total_amount_pence::text) LIKE $${idx} OR
+          LOWER(TO_CHAR(b.start_at, 'YYYY-MM-DD HH24:MI:SS')) LIKE $${idx} OR
+          LOWER(TO_CHAR(b.end_at, 'YYYY-MM-DD HH24:MI:SS')) LIKE $${idx} OR
+          LOWER(TO_CHAR(b.start_at, 'DD Mon YYYY')) LIKE $${idx} OR
+          LOWER(TO_CHAR(b.end_at, 'DD Mon YYYY')) LIKE $${idx}
+        )`
       );
       idx += 1;
     }
@@ -278,16 +322,37 @@ router.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
     const offset = (page - 1) * pageSize;
 
     const listSql = `
-      SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
-      FROM bookings
+      SELECT 
+        b.id, 
+        b.user_id, 
+        b.parking_id, 
+        b.status, 
+        b.start_at, 
+        b.end_at, 
+        b.total_amount_pence, 
+        b.currency, 
+        b.stripe_payment_intent_id, 
+        b.created_at, 
+        b.updated_at,
+        p.name AS parking_name,
+        COALESCE(
+          NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''),
+          u.email
+        ) AS user_name,
+        u.email AS user_email
+      FROM bookings b
+      LEFT JOIN parkings p ON p.id = b.parking_id
+      LEFT JOIN users u ON u.id = b.user_id
       WHERE ${where.join(" AND ")}
-      ORDER BY created_at DESC
+      ORDER BY b.created_at DESC
       LIMIT ${pageSize} OFFSET ${offset}
     `;
 
     const countSql = `
       SELECT COUNT(*)::int AS total
-      FROM bookings
+      FROM bookings b
+      LEFT JOIN parkings p ON p.id = b.parking_id
+      LEFT JOIN users u ON u.id = b.user_id
       WHERE ${where.join(" AND ")}
     `;
 

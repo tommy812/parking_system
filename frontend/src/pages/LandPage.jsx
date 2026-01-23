@@ -47,12 +47,29 @@ const LandPage = () => {
   const filterRef = useRef(null);
   const [fromDateTime, setFromDateTime] = useState(() => {
     const now = new Date();
-    now.setHours(17, 0, 0, 0);
+    // Round up to the next 5 minutes for cleaner display
+    const minutes = now.getMinutes();
+    const roundedMinutes = Math.ceil(minutes / 5) * 5;
+    now.setMinutes(roundedMinutes, 0, 0);
+    // If we rounded past the hour, move to next hour
+    if (roundedMinutes >= 60) {
+      now.setHours(now.getHours() + 1);
+      now.setMinutes(0, 0, 0);
+    }
     return now.toISOString().slice(0, 16);
   });
   const [untilDateTime, setUntilDateTime] = useState(() => {
     const now = new Date();
-    now.setHours(21, 0, 0, 0);
+    // Round up to the next 5 minutes
+    const minutes = now.getMinutes();
+    const roundedMinutes = Math.ceil(minutes / 5) * 5;
+    now.setMinutes(roundedMinutes, 0, 0);
+    if (roundedMinutes >= 60) {
+      now.setHours(now.getHours() + 1);
+      now.setMinutes(0, 0, 0);
+    }
+    // Set to 4 hours from now
+    now.setHours(now.getHours() + 4);
     return now.toISOString().slice(0, 16);
   });
   const referencePoint = currentLocation ?? mapCenter;

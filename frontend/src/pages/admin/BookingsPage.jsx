@@ -149,8 +149,8 @@ function BookingsPage() {
               footer={
                 <div className="text-xs text-base-content/70 space-y-0.5">
                   <div>Status: {b.status || "—"}</div>
-                  <div>User: {b.user_id || "—"}</div>
-                  <div>Parking: {b.parking_id || "—"}</div>
+                  <div>User: {b.user_name || b.user_email || b.user_id || "—"}</div>
+                  <div>Parking: {b.parking_name || b.parking_id || "—"}</div>
                 </div>
               }
             />
@@ -162,7 +162,7 @@ function BookingsPage() {
         <button className="join-item btn" onClick={() => handlePageChange(page - 1)} disabled={page === 1 || loading}>
           «
         </button>
-        <button className="join-item btn">Page {page} </button>
+        <button className="join-item btn">Page {page} of {Math.ceil(total / pageSize)}</button>
         <button
           className="join-item btn"
           onClick={() => handlePageChange(page + 1)}

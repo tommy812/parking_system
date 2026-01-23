@@ -46,15 +46,112 @@ router.post("/check-email-exists", async (req, res, next) => {
   }
 });
 
-// GET /api/users (ADMIN only) -> list users
+// GET /api/users (ADMIN only) -> list users with pagination/search/filter
 router.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
   try {
-    const r = await pool.query(
-      `SELECT id, email, role, phone, vehicle_reg, vehicle_model, vehicle_color, vehicle_year, created_at
-       FROM users
-       ORDER BY created_at DESC`
-    );
-    res.json({ users: r.rows });
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const pageSize = Math.min(Math.max(Number(req.query.page_size) || 20, 1), 100);
+    const query = req.query.query ? String(req.query.query).trim().toLowerCase() : "";
+    const roleFilter = req.query.filter ? String(req.query.filter).toUpperCase() : "";
+    const orderBy = req.query.order_by || "created_at DESC";
+
+    const params = [];
+    const where = ["1=1"];
+    let idx = 1;
+
+    // Role filter
+    if (roleFilter && roleFilter !== "ALL") {
+      const validRoles = ["USER", "OWNER", "ADMIN"];
+      if (validRoles.includes(roleFilter)) {
+        where.push(`role = $${idx}`);
+        params.push(roleFilter);
+        idx++;
+      }
+    }
+
+    // Search filter (searches email, phone, first_name, last_name, vehicle_reg)
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(
+          LOWER(id::text) LIKE $${idx} OR
+          LOWER(email) LIKE $${idx} OR
+          LOWER(COALESCE(phone, '')) LIKE $${idx} OR
+          LOWER(COALESCE(first_name, '')) LIKE $${idx} OR
+          LOWER(COALESCE(last_name, '')) LIKE $${idx} OR
+          LOWER(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) LIKE $${idx} OR
+          LOWER(COALESCE(vehicle_reg, '')) LIKE $${idx} OR
+          LOWER(COALESCE(vehicle_model, '')) LIKE $${idx}
+        )`
+      );
+      idx++;
+    }
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+
+    // Order by
+    let orderClause = "ORDER BY created_at DESC";
+    if (orderBy) {
+      const validOrders = {
+        latest: "created_at DESC",
+        oldest: "created_at ASC",
+        "email_asc": "email ASC",
+        "email_desc": "email DESC",
+        "name_asc": "first_name ASC, last_name ASC",
+        "name_desc": "first_name DESC, last_name DESC",
+      };
+      if (validOrders[orderBy]) {
+        orderClause = `ORDER BY ${validOrders[orderBy]}`;
+      } else if (orderBy.includes(" ")) {
+        // Allow custom order by if it looks safe
+        const safeOrder = orderBy.replace(/[^a-zA-Z0-9_,\s]/g, "");
+        if (safeOrder === orderBy) {
+          orderClause = `ORDER BY ${orderBy}`;
+        }
+      }
+    }
+
+    const offset = (page - 1) * pageSize;
+
+    const listSql = `
+      SELECT 
+        id, 
+        email, 
+        role, 
+        phone, 
+        first_name,
+        last_name,
+        address,
+        vehicle_reg, 
+        vehicle_model, 
+        vehicle_color, 
+        vehicle_year, 
+        is_approved,
+        created_at,
+        COALESCE(
+          NULLIF(TRIM(CONCAT(first_name, ' ', last_name)), ''),
+          email
+        ) AS display_name
+      FROM users
+      ${whereClause}
+      ${orderClause}
+      LIMIT ${pageSize} OFFSET ${offset}
+    `;
+
+    const countSql = `
+      SELECT COUNT(*)::int AS total
+      FROM users
+      ${whereClause}
+    `;
+
+    const [listRes, countRes] = await Promise.all([pool.query(listSql, params), pool.query(countSql, params)]);
+
+    res.json({
+      users: listRes.rows,
+      total: countRes.rows[0].total,
+      page,
+      page_size: pageSize,
+    });
   } catch (e) {
     next(e);
   }

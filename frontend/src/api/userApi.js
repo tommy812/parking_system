@@ -94,3 +94,45 @@ export async function fetchNumberOfOwners({ authHeader = {} } = {}) {
   }
   return response.json();
 }
+
+/**
+ * Fetch users for the admin view with pagination, search, and filters
+ */
+export async function fetchAdminUsers({
+  page = 1,
+  pageSize = 20,
+  search = "",
+  orderBy = "latest",
+  filter = "all",
+  authHeader = {},
+} = {}) {
+  if (!authHeader.Authorization) {
+    throw new Error("Missing bearer token");
+  }
+
+  const params = new URLSearchParams();
+  if (page) params.set("page", page);
+  if (pageSize) params.set("page_size", pageSize);
+  if (search) params.set("query", search);
+  if (orderBy) params.set("order_by", orderBy);
+  if (filter && filter !== "all") params.set("filter", filter);
+
+  const response = await fetch(
+    `${API_BASE_URL}users${params.toString() ? `?${params.toString()}` : ""}`,
+    {
+      headers: { "Content-Type": "application/json", ...authHeader },
+    }
+  );
+
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body?.error || `Failed to load users (${response.status})`);
+  }
+
+  return {
+    users: body.users || [],
+    total: body.total ?? null,
+    page: body.page ?? page,
+    page_size: body.page_size ?? pageSize,
+  };
+}
