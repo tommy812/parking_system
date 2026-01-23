@@ -22,6 +22,10 @@ export async function getBookingQuote({ parking_id, start_at, end_at, authHeader
  * Create a new booking
  */
 export async function createBooking({ parking_id, start_at, end_at, authHeader = {} }) {
+  if (!authHeader.Authorization) {
+    throw new Error("Missing bearer token");
+  }
+
   const response = await fetch(`${API_BASE_URL}bookings`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeader },
@@ -33,7 +37,28 @@ export async function createBooking({ parking_id, start_at, end_at, authHeader =
     throw new Error(body?.error || `Failed to create booking (${response.status})`);
   }
 
+  // Backend returns { booking: {...}, ... } so return the full response
   return body;
+}
+
+/**
+ * Fetch a single booking by ID
+ */
+export async function fetchBooking({ booking_id, authHeader = {} }) {
+  if (!authHeader.Authorization) {
+    throw new Error("Missing bearer token");
+  }
+
+  const response = await fetch(`${API_BASE_URL}bookings/${booking_id}`, {
+    headers: { "Content-Type": "application/json", ...authHeader },
+  });
+
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body?.error || `Failed to fetch booking (${response.status})`);
+  }
+
+  return body.booking || body;
 }
 
 /**

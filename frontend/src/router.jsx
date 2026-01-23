@@ -15,6 +15,8 @@ import ProfilePage from "./pages/ProfilePage";
 import BookinsPage from "./pages/BookinsPage";
 import SettingsPage from "./pages/SettingsPage";
 import BookingConfirmationPage from "./pages/BookingConfirmationPage";
+import PaymentPage from "./pages/PaymentPage";
+import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 
 {/* Admin pages */}
 import NotFound from "./pages/NotFound";
@@ -37,6 +39,8 @@ export const router = createBrowserRouter([
       { path: "profile",element:(<RequireAuth> <ProfilePage /> </RequireAuth>) },
       { path: "bookings", element: (<RequireAuth> <BookinsPage /> </RequireAuth>) },
       { path: "book", element: (<RequireAuth> <BookingConfirmationPage /> </RequireAuth>) },
+      { path: "payment", element: (<RequireAuth> <PaymentPage /> </RequireAuth>) },
+      { path: "payment-success", element: (<RequireAuth> <PaymentSuccessPage /> </RequireAuth>) },
       { path: "settings", element: (<RequireAuth> <SettingsPage /> </RequireAuth>) },
       { path: "password-forgot", element: (<RequireNotAuth> <PasswordForgot /> </RequireNotAuth>) },
       { path: "login", element: (<RequireNotAuth> <LogIn /> </RequireNotAuth>) },

@@ -93,15 +93,22 @@ const BookingConfirmationPage = () => {
       setError("");
 
       const authHeader = getAuthHeader();
-      const booking = await createBooking({
+      const bookingResponse = await createBooking({
         parking_id: parkingId,
         start_at: startAt,
         end_at: endAt,
         authHeader,
       });
 
+      // Extract booking ID from response
+      // Backend returns { booking: {...}, ... }
+      const bookingId = bookingResponse.booking?.id;
+      if (!bookingId) {
+        throw new Error("Failed to get booking ID from response");
+      }
+
       // Navigate to payment page with booking ID
-      navigate(`/payment?booking_id=${booking.id}`);
+      navigate(`/payment?booking_id=${bookingId}`);
     } catch (err) {
       console.error(err);
       setError(err.message || "Failed to create booking");
