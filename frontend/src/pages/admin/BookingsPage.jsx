@@ -16,7 +16,10 @@ function BookingsPage() {
   const [error, setError] = useState("");
 
   const authHeader = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
-  const load = async (nextPage = page) => {
+  const skeletonItems = useMemo(() => Array.from({ length: pageSize }, (_, i) => i), [pageSize]);
+  
+  const load = async (opts = {}) => {
+    const nextPage = opts.page ?? page;
     setLoading(true);
     setError("");
     try {
@@ -122,7 +125,16 @@ function BookingsPage() {
       {error && <p className="text-error text-sm">{error}</p>}
 
       <div className="grid xl:grid-cols-6 md:grid-cols-4 grid-cols-1 gap-4">
-        {bookings.length === 0 && !loading ? (
+        {loading ? (
+          skeletonItems.map((key) => (
+            <div key={key} className="flex w-52 flex-col gap-4">
+              <div className="skeleton h-32 w-full"></div>
+              <div className="skeleton h-4 w-28"></div>
+              <div className="skeleton h-4 w-full"></div>
+              <div className="skeleton h-4 w-full"></div>
+            </div>
+          ))
+        ) : bookings.length === 0 ? (
           <p className="text-sm text-base-content/70 col-span-full">No bookings found.</p>
         ) : (
           bookings.map((b) => (
@@ -132,14 +144,13 @@ function BookingsPage() {
               image="https://img.daisyui.com/images/stock/photo-1606107557195-0e29a4b5b4aa.webp"
               active={b.status === "CONFIRMED"}
               capacity={b.total_amount_pence ? `${(b.total_amount_pence / 100).toFixed(2)} ${b.currency || ""}` : ""}
+              bookingStart={b.start_at}
+              bookingEnd={b.end_at}
               footer={
                 <div className="text-xs text-base-content/70 space-y-0.5">
                   <div>Status: {b.status || "—"}</div>
                   <div>User: {b.user_id || "—"}</div>
                   <div>Parking: {b.parking_id || "—"}</div>
-                  <div>
-                    {b.start_ats} to {b.end_at}
-                  </div>
                 </div>
               }
             />

@@ -1,8 +1,10 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import { fallbackParkings, fetchParkings } from "../api/parkingApi";
+import ParkingCard from "../components/ParkingCard";
+import ParkingCardSkeleton from "../components/ParkingCardSkeleton";
 
 // Provide default marker icons when assets are not served from /node_modules
 const defaultIcon = new L.Icon({
@@ -32,11 +34,25 @@ const LandPage = () => {
   const [query, setQuery] = useState("");
   const [parkings, setParkings] = useState([]);
   const [selectedParking, setSelectedParking] = useState(null);
-  const [mapCenter, setMapCenter] = useState([51.5074, -0.1278]); // London default
+  const [mapCenter, setMapCenter] = useState([50.9097, -1.4044]); // Southampton default
   const [currentLocation, setCurrentLocation] = useState(null);
   const [loading, setLoading] = useState(false);
   const [liveLoading, setLiveLoading] = useState(false);
   const [error, setError] = useState("");
+  const [sortBy, setSortBy] = useState("recommended"); // recommended, cheapest, closest
+  const [availabilityFilter, setAvailabilityFilter] = useState("all"); // all, available, fully_booked
+  const [showFilters, setShowFilters] = useState(false);
+  const filterRef = useRef(null);
+  const [fromDateTime, setFromDateTime] = useState(() => {
+    const now = new Date();
+    now.setHours(17, 0, 0, 0);
+    return now.toISOString().slice(0, 16);
+  });
+  const [untilDateTime, setUntilDateTime] = useState(() => {
+    const now = new Date();
+    now.setHours(21, 0, 0, 0);
+    return now.toISOString().slice(0, 16);
+  });
   const referencePoint = currentLocation ?? mapCenter;
 
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -55,21 +71,54 @@ const LandPage = () => {
   };
 
   const sortedParkings = useMemo(() => {
-    if (!referencePoint || referencePoint.length !== 2) return parkings;
-    const [refLat, refLon] = referencePoint;
-
-    return [...parkings].sort((a, b) => {
-      const distA =
-        Number.isFinite(a.latitude) && Number.isFinite(a.longitude)
-          ? haversineKm(refLat, refLon, a.latitude, a.longitude)
+    if (!parkings.length) return [];
+    
+    // First apply availability filter
+    let filtered = [...parkings];
+    
+    if (availabilityFilter === "available") {
+      filtered = filtered.filter((p) => p.available === true);
+    } else if (availabilityFilter === "fully_booked") {
+      filtered = filtered.filter((p) => p.available === false);
+    }
+    // "all" shows everything, no filtering needed
+    
+    // Then apply sorting
+    let sorted = [...filtered];
+    
+    if (sortBy === "closest" && referencePoint && referencePoint.length === 2) {
+      const [refLat, refLon] = referencePoint;
+      sorted.sort((a, b) => {
+        const distA =
+          Number.isFinite(a.latitude) && Number.isFinite(a.longitude)
+            ? haversineKm(refLat, refLon, a.latitude, a.longitude)
+            : Infinity;
+        const distB =
+          Number.isFinite(b.latitude) && Number.isFinite(b.longitude)
+            ? haversineKm(refLat, refLon, b.latitude, b.longitude)
+            : Infinity;
+        return distA - distB;
+      });
+    } else if (sortBy === "cheapest") {
+      // Sort by price_pence if available, otherwise keep original order
+      sorted.sort((a, b) => {
+        const priceA = a.price_pence !== undefined && a.price_pence !== null 
+          ? a.price_pence 
+          : a.total_amount_pence !== undefined && a.total_amount_pence !== null
+          ? a.total_amount_pence
           : Infinity;
-      const distB =
-        Number.isFinite(b.latitude) && Number.isFinite(b.longitude)
-          ? haversineKm(refLat, refLon, b.latitude, b.longitude)
+        const priceB = b.price_pence !== undefined && b.price_pence !== null 
+          ? b.price_pence 
+          : b.total_amount_pence !== undefined && b.total_amount_pence !== null
+          ? b.total_amount_pence
           : Infinity;
-      return distA - distB;
-    });
-  }, [parkings, referencePoint]);
+        return priceA - priceB;
+      });
+    }
+    // "recommended" keeps original order
+    
+    return sorted;
+  }, [parkings, sortBy, availabilityFilter, referencePoint]);
 
   const distanceMiles = (parking) => {
     if (
@@ -87,23 +136,42 @@ const LandPage = () => {
 
   const loadParkings = async (params = {}, options = {}) => {
     const { isLive = false, signal } = options;
+    const hasSearchParams = params.query || (params.lat && params.lon);
+    
+    // Include dates in the search if they're set
+    const searchParams = {
+      ...params,
+      start_at: fromDateTime ? new Date(fromDateTime).toISOString() : undefined,
+      end_at: untilDateTime ? new Date(untilDateTime).toISOString() : undefined,
+    };
+    
     if (!isLive) setLoading(true);
     if (isLive) setLiveLoading(true);
     if (!isLive) setError("");
 
     try {
-      const { parkings: fetched } = await fetchParkings({ ...params, signal });
+      const { parkings: fetched } = await fetchParkings({ ...searchParams, signal });
 
-      if (!fetched.length) {
-        setError("No parking spots found for that search.");
+      // If search returned no results but we had search params, fall back to showing all parkings
+      if (!fetched.length && hasSearchParams && !isLive) {
+        console.log("No results for search, loading all parkings instead");
+        const { parkings: allParkings } = await fetchParkings({}, { signal });
+        setParkings(allParkings.length > 0 ? allParkings : fetched);
+        setError(""); // Don't show error, just show all parkings
+      } else {
+        setParkings(fetched);
+        if (fetched.length > 0) {
+          setError(""); // Clear error if we have results
+        }
       }
-
-      setParkings(fetched);
 
       if (typeof params.lat === "number" && typeof params.lon === "number") {
         setMapCenter([params.lat, params.lon]);
       } else if (fetched[0]) {
         setMapCenter([fetched[0].latitude, fetched[0].longitude]);
+      } else if (parkings[0]) {
+        // If fetched is empty but we have existing parkings, keep current center
+        setMapCenter([parkings[0].latitude, parkings[0].longitude]);
       }
     } catch (err) {
       console.error(err);
@@ -129,20 +197,48 @@ const LandPage = () => {
     loadParkings();
   }, []);
 
-  // Live search as the user types
+  // Reload parkings when dates change
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setLiveLoading(false);
-      return;
+    if (fromDateTime && untilDateTime) {
+      loadParkings({}, { isLive: true });
+    }
+  }, [fromDateTime, untilDateTime]);
+
+  // Close filter dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (filterRef.current && !filterRef.current.contains(event.target)) {
+        setShowFilters(false);
+      }
+    };
+
+    if (showFilters) {
+      document.addEventListener("mousedown", handleClickOutside);
     }
 
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showFilters]);
+
+  // Live search as the user types (for text input)
+  useEffect(() => {
+    const trimmed = query.trim();
+    
     const controller = new AbortController();
     const handle = setTimeout(() => {
-      loadParkings(
-        { query: trimmed },
-        { isLive: true, signal: controller.signal }
-      );
+      if (trimmed.length === 0) {
+        // If search is cleared, load all parkings
+        loadParkings({}, { isLive: true, signal: controller.signal });
+      } else if (trimmed.length >= 2) {
+        // Only search if at least 2 characters
+        loadParkings(
+          { query: trimmed },
+          { isLive: true, signal: controller.signal }
+        );
+      } else {
+        setLiveLoading(false);
+      }
     }, 350);
 
     return () => {
@@ -150,6 +246,7 @@ const LandPage = () => {
       clearTimeout(handle);
     };
   }, [query]);
+
 
   const handleSearch = (event) => {
     event.preventDefault();
@@ -181,230 +278,253 @@ const LandPage = () => {
     );
   };
 
-  return (
-    <div className=" bg-base-200 ">
-      <div className="max-w-6xl mx-auto px-6 py-12">
-        <div className="grid lg:grid-cols-2 gap-10 items-start">
-          <div className="space-y-6">
-            <div>
-              <p className="text-sm uppercase tracking-wide text-neutral">
-                Parking made simple
-              </p>
-              <h1 className="mt-2 text-4xl font-bold text-heading">
-                Find and book a parking spot near you
-              </h1>
-              <p className="mt-3 text-body">
-                Search by place or use your current location. See nearby
-                parkings on the map and book directly from the marker card.
-              </p>
-            </div>
+  const formatDateTime = (isoString) => {
+    if (!isoString) return "";
+    const date = new Date(isoString);
+    const today = new Date();
+    const isToday = date.toDateString() === today.toDateString();
+    
+    const timeStr = date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    if (isToday) {
+      return `Today at ${timeStr}`;
+    }
+    return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  };
 
-            <form onSubmit={handleSearch} className="space-y-3">
-              <div className="relative">
+  return (
+    <div className="flex flex-col h-screen bg-base-100">
+      {/* Top Search Bar */}
+      <div className="bg-base-100 border-b border-base-300 p-4">
+        <div className="flex gap-3 items-center max-w-full">
+          <div className="flex-1">
+            <label className="text-xs text-base-content/70 mb-1 block">Park at</label>
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
                 <div className="absolute inset-y-0 start-0 flex items-center ps-3 pointer-events-none">
                   <svg
-                    className="w-4 h-4 text-body"
-                    aria-hidden="true"
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="24"
-                    height="24"
+                    className="w-4 h-4 text-base-content/50"
                     fill="none"
+                    stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
                     <path
-                      stroke="currentColor"
                       strokeLinecap="round"
-                      strokeWidth="2"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
                       d="m21 21-3.5-3.5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"
                     />
                   </svg>
                 </div>
                 <input
-                  type="search"
-                  id="search"
+                  type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  className="block w-full p-3 ps-9 bg-neutral-secondary-medium border border-default-medium text-heading text-sm rounded-full focus:ring-primary focus:border-primary shadow-xs placeholder:text-body"
-                  placeholder="Search a location or parking name"
-                  required
+                  placeholder="Search parkings by name or address"
+                  className="input w-full input-bordered border-primary pl-10"
                 />
-                <button
-                  type="submit"
-                  className="absolute end-1.5 bottom-1.5 text-white bg-primary hover:bg-primary/80 border border-transparent focus:ring-4 focus:ring-primary shadow-xs font-medium leading-5 rounded-full text-xs px-4 py-1.5 focus:outline-none"
-                >
-                  {loading ? "Searching..." : "Search"}
-                </button>
-                {query.trim().length >= 2 && sortedParkings.length > 0 && (
-                  <ul className="absolute z-20 mt-2 w-full bg-base-100 border border-default-medium rounded-xl shadow-lg max-h-60 overflow-y-auto">
-                    {sortedParkings.map((parking) => (
-                      <li
-                        key={parking.id}
-                        className="px-4 py-2 hover:bg-base-200 cursor-pointer flex justify-between gap-3"
-                        onMouseDown={() => {
-                          setSelectedParking(parking);
-                          setMapCenter([parking.latitude, parking.longitude]);
-                        }}
-                      >
-                        <span className="text-sm">
-                          {parking.name}
-                          {parking.address ? ` — ${parking.address}` : ""}
-                        </span>
-                        {liveLoading && <span className="text-xs text-neutral">…</span>}
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
               <button
                 type="button"
                 onClick={handleUseLocation}
-                className="btn btn-outline btn-sm"
+                className="btn btn-outline btn-sm self-end"
+                title="Use my current location"
               >
-                Use my current location
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
               </button>
-              {error && (
-                <p className="text-sm text-error bg-error/10 p-2 rounded-lg">
-                  {error}
-                </p>
-              )}
-            </form>
+            </div>
+          </div>
+          
+          <div className="w-48">
+            <label className="text-xs text-base-content/70 mb-1 block">From</label>
+            <input
+              type="datetime-local"
+              value={fromDateTime}
+              onChange={(e) => setFromDateTime(e.target.value)}
+              className="input w-full input-bordered border-primary"
+            />
+          </div>
+          
+          <div className="w-48">
+            <label className="text-xs text-base-content/70 mb-1 block">Until</label>
+            <input
+              type="datetime-local"
+              value={untilDateTime}
+              onChange={(e) => setUntilDateTime(e.target.value)}
+              className="input w-full input-bordered border-primary"
+            />
+          </div>
+        </div>
+      </div>
 
-            <div className="space-y-2">
-              <p className="text-sm text-neutral">
-                Closest 3 parkings {currentLocation ? "near you" : "near this area"}
-              </p>
-              <div className="grid grid-cols-1 gap-3">
-                {sortedParkings.slice(0, 3).map((parking) => (
-                  <div
-                    key={parking.id}
-                    className="p-3 rounded-xl bg-base-100 shadow-sm border border-default-medium flex justify-between items-center"
-                  >
-                    <div>
-                      <p className="font-semibold">{parking.name}</p>
-                      <p className="text-sm text-body">
-                        {parking.address || "Address not provided"}
-                      </p>
-                      {Number.isFinite(distanceMiles(parking)) && (
-                        <p className="text-xs text-neutral">
-                          {distanceMiles(parking) < 10
-                            ? `${distanceMiles(parking).toFixed(1)} mi away`
-                            : `${Math.round(distanceMiles(parking))} mi away`}
-                        </p>
-                      )}
+      {/* Main Content: Sidebar + Map */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Sidebar */}
+        <div className="lg:w-96 w-0 bg-base-100 border-r border-base-300 flex flex-col overflow-hidden">
+          {/* Sorting Tabs */}
+          <div className="flex items-center justify-between py-4  border-b border-base-300">
+            <div className="tabs tabs-boxed">
+              <button
+                className={`tab ${sortBy === "recommended" ? "tab-active" : ""}`}
+                onClick={() => setSortBy("recommended")}
+              >
+                Recommended
+              </button>
+              <button
+                className={`tab ${sortBy === "cheapest" ? "tab-active" : ""}`}
+                onClick={() => setSortBy("cheapest")}
+              >
+                Cheapest
+              </button>
+              <button
+                className={`tab ${sortBy === "closest" ? "tab-active" : ""}`}
+                onClick={() => setSortBy("closest")}
+              >
+                Closest
+              </button>
+            </div>
+            <div className="relative" ref={filterRef}>
+              <button 
+                className="btn btn-ghost btn-sm"
+                onClick={() => setShowFilters(!showFilters)}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+                Filters
+              </button>
+              {showFilters && (
+                <div className="absolute right-0 top-full mt-2 w-56 bg-base-100 border border-base-300 rounded-lg shadow-lg z-10">
+                  <div className="p-2">
+                    <div className="text-xs font-semibold text-base-content/70 mb-2 px-2">Availability</div>
+                    <div className="space-y-1">
+                      <button
+                        className={`btn btn-sm btn-ghost w-full justify-start ${availabilityFilter === "all" ? "btn-active" : ""}`}
+                        onClick={() => {
+                          setAvailabilityFilter("all");
+                          setShowFilters(false);
+                        }}
+                      >
+                        Show all
+                      </button>
+                      <button
+                        className={`btn btn-sm btn-ghost w-full justify-start ${availabilityFilter === "available" ? "btn-active" : ""}`}
+                        onClick={() => {
+                          setAvailabilityFilter("available");
+                          setShowFilters(false);
+                        }}
+                      >
+                        Only with availability
+                      </button>
+                      <button
+                        className={`btn btn-sm btn-ghost w-full justify-start ${availabilityFilter === "fully_booked" ? "btn-active" : ""}`}
+                        onClick={() => {
+                          setAvailabilityFilter("fully_booked");
+                          setShowFilters(false);
+                        }}
+                      >
+                        Only fully booked
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => setSelectedParking(parking)}
-                    >
-                      Open
-                    </button>
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="w-full h-full rounded-2xl overflow-hidden shadow-xl border border-default-medium bg-base-100">
-            <MapContainer
-              center={mapCenter}
-              zoom={13}
-              scrollWheelZoom
-              className="h-full w-full z-0"
-            >
-              <RecenterMap center={mapCenter} />
-              <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
-              {currentLocation && (
-                <Marker
-                  position={currentLocation}
-                  icon={new L.Icon({
-                    iconUrl:
-                      "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-red.png",
-                    shadowUrl:
-                      "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-                    iconSize: [25, 41],
-                    iconAnchor: [12, 41],
-                  })}
-                >
-                  <Popup>Your current location</Popup>
-                </Marker>
-              )}
-              {sortedParkings.map((parking) => (
-                <Marker
-                  key={parking.id}
-                  position={[parking.latitude, parking.longitude]}
-                  eventHandlers={{
-                    click: () => setSelectedParking(parking),
-                  }}
-                >
-                  <Popup>
-                    <div className="space-y-1">
-                      <p className="font-semibold">{parking.name}</p>
-                      <p className="text-xs text-body">
-                        {parking.address || "Address not provided"}
-                      </p>
-                      {Number.isFinite(distanceMiles(parking)) && (
-                        <p className="text-xs text-neutral">
-                          {distanceMiles(parking) < 10
-                            ? `${distanceMiles(parking).toFixed(1)} mi away`
-                            : `${Math.round(distanceMiles(parking))} mi away`}
-                        </p>
-                      )}
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-xs mt-2"
-                        onClick={() => setSelectedParking(parking)}
-                      >
-                        View details
-                      </button>
-                    </div>
-                  </Popup>
-                </Marker>
-              ))}
-            </MapContainer>
+          {/* Parking List */}
+          <div className="flex-1 overflow-y-auto">
+            {loading ? (
+              <div className="p-2 space-y-2">
+                {[...Array(5)].map((_, i) => (
+                  <ParkingCardSkeleton key={i} />
+                ))}
+              </div>
+            ) : error ? (
+              <div className="p-4 text-error text-sm">{error}</div>
+            ) : sortedParkings.length === 0 ? (
+              <div className="p-4 text-center text-base-content/70">No parkings found</div>
+            ) : (
+              <div className="p-2 space-y-2">
+                {sortedParkings.map((parking) => (
+                  <ParkingCard
+                    key={parking.id}
+                    parking={parking}
+                    isSelected={selectedParking?.id === parking.id}
+                    distanceMiles={distanceMiles}
+                    onSelect={(p) => {
+                      setSelectedParking(p);
+                      if (p.latitude && p.longitude) {
+                        setMapCenter([p.latitude, p.longitude]);
+                      }
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
+        </div>
+
+        {/* Right Map */}
+        <div className="flex-1 relative">
+          <MapContainer
+            center={mapCenter}
+            zoom={13}
+            scrollWheelZoom
+            className="h-full w-full z-0"
+          >
+            <RecenterMap center={mapCenter} />
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            {currentLocation && (
+              <Marker
+                position={currentLocation}
+                icon={new L.Icon({
+                  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-red.png",
+                  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+                  iconSize: [25, 41],
+                  iconAnchor: [12, 41],
+                })}
+              >
+                <Popup>Your current location</Popup>
+              </Marker>
+            )}
+            {sortedParkings.map((parking) => (
+              <Marker
+                key={parking.id}
+                position={[parking.latitude, parking.longitude]}
+                eventHandlers={{
+                  click: () => setSelectedParking(parking),
+                }}
+              >
+                <Popup className="parking-popup">
+                  <div className="w-80 max-w-[90vw]">
+                    <ParkingCard
+                      parking={parking}
+                      isSelected={selectedParking?.id === parking.id}
+                      distanceMiles={distanceMiles}
+                      onSelect={(p) => {
+                        setSelectedParking(p);
+                        if (p.latitude && p.longitude) {
+                          setMapCenter([p.latitude, p.longitude]);
+                        }
+                      }}
+                    />
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
+          </MapContainer>
         </div>
       </div>
 
       {selectedParking && (
         <>
-          <div className="modal modal-open">
-            <div className="modal-box max-w-lg">
-              <figure className="h-48 w-full overflow-hidden rounded-xl mb-4">
-                <img
-                  src={
-                    selectedParking.imageUrl ||
-                    "https://images.unsplash.com/photo-1489515217757-5fd1be406fef?auto=format&fit=crop&w=1200&q=80"
-                  }
-                  alt={selectedParking.name}
-                  className="w-full h-full object-cover"
-                />
-              </figure>
-              <h3 className="font-bold text-xl">{selectedParking.name}</h3>
-              <p className="text-sm text-body mt-1">
-                {selectedParking.address || "Address not provided"}
-              </p>
-              <div className="modal-action">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => setSelectedParking(null)}
-                >
-                  Close
-                </button>
-                <button type="button" className="btn btn-primary">
-                  Book
-                </button>
-              </div>
-            </div>
-          </div>
-          <div
-            className="modal-backdrop bg-black/40"
-            onClick={() => setSelectedParking(null)}
-          />
+          
         </>
       )}
     </div>

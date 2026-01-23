@@ -79,3 +79,39 @@ html {
   padding: 0;
   box-sizing: border-box;
 }
+
+/* Geoapify Autocomplete Styles using Tailwind */
+.geoapify-autocomplete-input {
+  @apply input w-full py-5 label border-primary;
+}
+.geoapify-autocomplete-items {
+  @apply z-[10000] ;
+}
+
+.geoapify-autocomplete-items > div {
+  @apply px-4 py-3 cursor-pointer text-base-content border-b border-base-300;
+}
+
+.geoapify-autocomplete-items > div:last-child {
+  @apply border-b-0;
+}
+
+.geoapify-autocomplete-items > div:hover,
+.geoapify-autocomplete-items > div.geoapify-autocomplete-item-active {
+  @apply bg-primary/10;
+}
+
+/* Leaflet Popup Styling for ParkingCard */
+.leaflet-popup-content-wrapper {
+  padding: 0;
+}
+
+.leaflet-popup-content {
+  margin: 0;
+  min-width: 320px;
+}
+
+.parking-popup .leaflet-popup-content-wrapper {
+  border-radius: 0.5rem;
+  overflow: hidden;
+}

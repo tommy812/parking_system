@@ -8,6 +8,8 @@ export default function TextField({
   onChange,
   error,
   inputClassName = "",
+  disabled = false,
+  readOnly = false,
 }) {
   return (
     <div className="form-control gap-2 grid grid-cols-1">
@@ -21,6 +23,8 @@ export default function TextField({
         placeholder={placeholder}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        readOnly={readOnly}
       />
 
       {error ? <p className="text-error text-sm mt-1">{error}</p> : <span className="mt-[20px]"></span>}

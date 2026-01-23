@@ -38,7 +38,7 @@ export default function RootLayout() {
   }, [user]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-base-200">
+    <div className="h-screen flex flex-col  bg-base-200">
       <header className="navbar bg-primary shadow-sm">
         <div className="navbar-start">
           <Link to="/" className=" text-primary-content text-2xl px-2 font-bold">
@@ -158,7 +158,7 @@ export default function RootLayout() {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-5xl md:max-w-7xl mx-auto p-2">
+      <main className="flex-1 w-full 2">
         <Outlet />
       </main>
 

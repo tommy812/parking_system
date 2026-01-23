@@ -240,13 +240,18 @@ router.get("/search", async (req, res, next) => {
       idx += 1;
     }
 
+    // Track date indices for use in SELECT clause
+    let startIdx = null;
+    let endIdx = null;
+    let durIdx = null;
+
     // availability filter
     if (start && end) {
       params.push(start.toISOString());
-      const startIdx = idx;
+      startIdx = idx;
       idx += 1;
       params.push(end.toISOString());
-      const endIdx = idx;
+      endIdx = idx;
       idx += 1;
 
       // available if overlapping bookings < capacity
@@ -267,9 +272,11 @@ router.get("/search", async (req, res, next) => {
       if (!durationMinutes) {
         return res.status(400).json({ error: "max_price_pence requires start_at and end_at" });
       }
-      params.push(durationMinutes);
-      const durIdx = idx;
-      idx += 1;
+      if (!durIdx) {
+        params.push(durationMinutes);
+        durIdx = idx;
+        idx += 1;
+      }
       params.push(maxPrice);
       const priceIdx = idx;
       idx += 1;
@@ -323,9 +330,56 @@ router.get("/search", async (req, res, next) => {
       ) <= $${radIdx}`);
     }
 
+    // Add pricing and availability info when dates are provided
+    let priceSelect = "NULL::int AS price_pence";
+    let bookedCountSelect = "NULL::int AS booked_count";
+    let availableSelect = "NULL::boolean AS available";
+    
+    if (start && end && durationMinutes) {
+      // Add duration to params if not already added (for maxPrice filter)
+      if (!durIdx) {
+        params.push(durationMinutes);
+        durIdx = idx;
+        idx += 1;
+      }
+      
+      priceSelect = `(
+        SELECT pt.price_pence
+        FROM pricing_tiers pt
+        WHERE pt.parking_id = p.id
+          AND pt.is_active = true
+          AND pt.max_minutes >= $${durIdx}
+        ORDER BY pt.max_minutes ASC
+        LIMIT 1
+      ) AS price_pence`;
+      
+      if (startIdx && endIdx) {
+        bookedCountSelect = `(
+          SELECT COUNT(*)::int
+          FROM bookings b
+          WHERE b.parking_id = p.id
+            AND b.status IN ('PENDING','CONFIRMED')
+            AND b.start_at < $${endIdx}
+            AND b.end_at > $${startIdx}
+        ) AS booked_count`;
+        
+        availableSelect = `(
+          SELECT COUNT(*)::int
+          FROM bookings b
+          WHERE b.parking_id = p.id
+            AND b.status IN ('PENDING','CONFIRMED')
+            AND b.start_at < $${endIdx}
+            AND b.end_at > $${startIdx}
+        ) < p.capacity AS available`;
+      }
+    }
+
     const sql = `
       SELECT p.id, p.name, p.address, p.timezone, p.capacity, p.currency, p.image_url, p.owner_user_id, p.lat, p.lng, p.created_at,
-             ${distanceSelect}
+             ${distanceSelect},
+             ${priceSelect},
+             ${bookedCountSelect},
+             ${availableSelect}
       FROM parkings p
       WHERE ${where.join(" AND ")}
       ORDER BY ${useGeo ? "distance_km ASC" : "p.created_at DESC"}
@@ -407,7 +461,13 @@ router.put(
         min_booking_minutes,
         max_booking_minutes,
         buffer_minutes,
+        owner_user_id,
+        is_active,
       } = req.body;
+
+      const canAdminEdit = req.user.role === "ADMIN";
+      const nextOwnerUserId = canAdminEdit ? (owner_user_id ?? null) : undefined;
+      const nextIsActive = canAdminEdit ? (is_active === undefined ? undefined : Boolean(is_active)) : undefined;
 
       if (capacity !== undefined) {
         const c = Number(capacity);
@@ -458,11 +518,13 @@ router.put(
              open_end_minute_utc = COALESCE($11, open_end_minute_utc),
              min_booking_minutes = COALESCE($12, min_booking_minutes),
              max_booking_minutes = COALESCE($13, max_booking_minutes),
-             buffer_minutes = COALESCE($14, buffer_minutes)
+             buffer_minutes = COALESCE($14, buffer_minutes),
+             owner_user_id = COALESCE($15, owner_user_id),
+             is_active = COALESCE($16, is_active)
          WHERE id = $1
          RETURNING id, name, address, timezone, capacity, currency, image_url, owner_user_id, lat, lng,
                    open_start_minute_utc, open_end_minute_utc, min_booking_minutes, max_booking_minutes, buffer_minutes,
-                   created_at`,
+                   is_active, created_at`,
         [
           id,
           name ?? null,
@@ -478,11 +540,16 @@ router.put(
           minB === undefined ? null : minB,
           maxB === undefined ? null : maxB,
           buf === undefined ? null : buf,
+          nextOwnerUserId === undefined ? null : nextOwnerUserId,
+          nextIsActive === undefined ? null : nextIsActive,
         ]
       );
 
       res.json({ parking: r.rows[0] });
     } catch (e) {
+      if (e && e.code === "23505") {
+        return res.status(409).json({ error: "A tier with that max_minutes already exists" });
+      }
       next(e);
     }
   }
@@ -547,26 +614,33 @@ router.put(
   async (req, res, next) => {
     try {
       const { id, tierId } = req.params;
+      const max_minutes =
+        req.body.max_minutes === undefined ? undefined : Number(req.body.max_minutes);
       const price_pence =
         req.body.price_pence === undefined ? undefined : Number(req.body.price_pence);
       const currency =
         req.body.currency === undefined ? undefined : String(req.body.currency).toUpperCase();
       const is_active = req.body.is_active === undefined ? undefined : Boolean(req.body.is_active);
 
+      if (max_minutes !== undefined && (!Number.isInteger(max_minutes) || max_minutes <= 0)) {
+        return res.status(400).json({ error: "max_minutes must be a positive integer" });
+      }
       if (price_pence !== undefined && (!Number.isInteger(price_pence) || price_pence < 0)) {
         return res.status(400).json({ error: "price_pence must be a non-negative integer" });
       }
 
       const r = await pool.query(
         `UPDATE pricing_tiers
-         SET price_pence = COALESCE($3, price_pence),
-             currency = COALESCE($4, currency),
-             is_active = COALESCE($5, is_active)
+         SET max_minutes = COALESCE($3, max_minutes),
+             price_pence = COALESCE($4, price_pence),
+             currency = COALESCE($5, currency),
+             is_active = COALESCE($6, is_active)
          WHERE id = $2 AND parking_id = $1
          RETURNING id, parking_id, max_minutes, price_pence, currency, is_active, created_at`,
         [
           id,
           tierId,
+          max_minutes === undefined ? null : max_minutes,
           price_pence === undefined ? null : price_pence,
           currency === undefined ? null : currency,
           is_active === undefined ? null : is_active,
@@ -599,6 +673,126 @@ router.delete(
       );
       if (r.rowCount === 0) return res.status(404).json({ error: "Pricing tier not found" });
       return res.json({ tier: r.rows[0] });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+// GET /api/parkings/:id/blackouts -> list blackouts for a parking
+// POST /api/parkings/:id/blackouts -> create blackout (OWNER/ADMIN)
+router
+  .route("/:id/blackouts")
+  .get(requireAuth, requireRole(["OWNER", "ADMIN"]), requireParkingOwner, async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const r = await pool.query(
+        `SELECT id, parking_id, start_at, end_at, reason, created_at
+         FROM parking_blackouts
+         WHERE parking_id = $1
+         ORDER BY start_at ASC`,
+        [id]
+      );
+      res.json({ blackouts: r.rows });
+    } catch (e) {
+      next(e);
+    }
+  })
+  .post(requireAuth, requireRole(["OWNER", "ADMIN"]), requireParkingOwner, async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const start_at = req.body.start_at ? new Date(String(req.body.start_at)) : null;
+      const end_at = req.body.end_at ? new Date(String(req.body.end_at)) : null;
+      const reason = req.body.reason ? String(req.body.reason).trim() : null;
+
+      if (!start_at || Number.isNaN(start_at.getTime())) {
+        return res.status(400).json({ error: "start_at must be a valid ISO datetime" });
+      }
+      if (!end_at || Number.isNaN(end_at.getTime())) {
+        return res.status(400).json({ error: "end_at must be a valid ISO datetime" });
+      }
+      if (end_at <= start_at) {
+        return res.status(400).json({ error: "end_at must be after start_at" });
+      }
+
+      const r = await pool.query(
+        `INSERT INTO parking_blackouts (parking_id, start_at, end_at, reason)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, parking_id, start_at, end_at, reason, created_at`,
+        [id, start_at.toISOString(), end_at.toISOString(), reason]
+      );
+      res.status(201).json({ blackout: r.rows[0] });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+// PUT /api/parkings/:id/blackouts/:blackoutId -> update blackout (OWNER/ADMIN)
+router.put(
+  "/:id/blackouts/:blackoutId",
+  requireAuth,
+  requireRole(["OWNER", "ADMIN"]),
+  requireParkingOwner,
+  async (req, res, next) => {
+    try {
+      const { id, blackoutId } = req.params;
+      const start_at =
+        req.body.start_at === undefined ? undefined : new Date(String(req.body.start_at));
+      const end_at =
+        req.body.end_at === undefined ? undefined : new Date(String(req.body.end_at));
+      const reason = req.body.reason === undefined ? undefined : String(req.body.reason).trim();
+
+      if (start_at !== undefined && Number.isNaN(start_at.getTime())) {
+        return res.status(400).json({ error: "start_at must be a valid ISO datetime" });
+      }
+      if (end_at !== undefined && Number.isNaN(end_at.getTime())) {
+        return res.status(400).json({ error: "end_at must be a valid ISO datetime" });
+      }
+      if (start_at !== undefined && end_at !== undefined && end_at <= start_at) {
+        return res.status(400).json({ error: "end_at must be after start_at" });
+      }
+
+      const r = await pool.query(
+        `UPDATE parking_blackouts
+         SET start_at = COALESCE($3, start_at),
+             end_at = COALESCE($4, end_at),
+             reason = COALESCE($5, reason)
+         WHERE id = $2 AND parking_id = $1
+         RETURNING id, parking_id, start_at, end_at, reason, created_at`,
+        [
+          id,
+          blackoutId,
+          start_at === undefined ? null : start_at.toISOString(),
+          end_at === undefined ? null : end_at.toISOString(),
+          reason === undefined ? null : reason,
+        ]
+      );
+
+      if (r.rowCount === 0) return res.status(404).json({ error: "Blackout not found" });
+      res.json({ blackout: r.rows[0] });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+// DELETE /api/parkings/:id/blackouts/:blackoutId -> delete blackout (OWNER/ADMIN)
+router.delete(
+  "/:id/blackouts/:blackoutId",
+  requireAuth,
+  requireRole(["OWNER", "ADMIN"]),
+  requireParkingOwner,
+  async (req, res, next) => {
+    try {
+      const { id, blackoutId } = req.params;
+      const r = await pool.query(
+        `DELETE FROM parking_blackouts
+         WHERE id = $2 AND parking_id = $1
+         RETURNING id, parking_id, start_at, end_at, reason, created_at`,
+        [id, blackoutId]
+      );
+      if (r.rowCount === 0) return res.status(404).json({ error: "Blackout not found" });
+      res.json({ blackout: r.rows[0] });
     } catch (e) {
       next(e);
     }
