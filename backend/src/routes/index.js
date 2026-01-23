@@ -8,6 +8,7 @@ const parkingsRouter = require("./parkings");
 const bookingsRouter = require("./bookings");
 const paymentsRouter = require("./payments");
 const stripePublicRouter = require("./stripePublic");
+const vehicleLookupRouter = require("./vehicleLookup");
 
 // health API root
 router.get("/", (req, res) => {
@@ -29,5 +30,6 @@ router.use("/parkings", parkingsRouter);
 router.use("/bookings", bookingsRouter);
 router.use("/payments", paymentsRouter);
 router.use("/stripe", stripePublicRouter);
+router.use("/vehicle", vehicleLookupRouter);
 
 module.exports = router;

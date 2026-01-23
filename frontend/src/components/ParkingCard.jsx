@@ -93,6 +93,12 @@ const ParkingCard = ({
           <button 
             className={`btn btn-primary btn-sm ${parking.available === false ? "btn-disabled" : ""}`}
             disabled={parking.available === false}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (parking.available !== false && onSelect) {
+                onSelect(parking);
+              }
+            }}
           >
             Reserve for {formatPrice()}
           </button>

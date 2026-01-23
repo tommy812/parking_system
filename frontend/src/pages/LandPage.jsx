@@ -1,6 +1,7 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import { fallbackParkings, fetchParkings } from "../api/parkingApi";
 import ParkingCard from "../components/ParkingCard";
@@ -31,6 +32,7 @@ const RecenterMap = ({ center }) => {
 };
 
 const LandPage = () => {
+  const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [parkings, setParkings] = useState([]);
   const [selectedParking, setSelectedParking] = useState(null);
@@ -455,9 +457,28 @@ const LandPage = () => {
                     isSelected={selectedParking?.id === parking.id}
                     distanceMiles={distanceMiles}
                     onSelect={(p) => {
-                      setSelectedParking(p);
-                      if (p.latitude && p.longitude) {
-                        setMapCenter([p.latitude, p.longitude]);
+                      // Navigate to booking confirmation page
+                      if (fromDateTime && untilDateTime) {
+                        // Calculate duration from original selection
+                        const originalStart = new Date(fromDateTime);
+                        const originalEnd = new Date(untilDateTime);
+                        const durationMs = originalEnd.getTime() - originalStart.getTime();
+                        
+                        // Set start to current time + 5 minutes (to avoid "past" validation errors)
+                        // and maintain the same duration
+                        const now = new Date();
+                        const startAt = new Date(now.getTime() + 5 * 60 * 1000); // 5 minutes from now
+                        const endAt = new Date(startAt.getTime() + durationMs);
+                        
+                        navigate(
+                          `/book?parking_id=${p.id}&start_at=${encodeURIComponent(startAt.toISOString())}&end_at=${encodeURIComponent(endAt.toISOString())}`
+                        );
+                      } else {
+                        // Just select for map view if no dates
+                        setSelectedParking(p);
+                        if (p.latitude && p.longitude) {
+                          setMapCenter([p.latitude, p.longitude]);
+                        }
                       }
                     }}
                   />

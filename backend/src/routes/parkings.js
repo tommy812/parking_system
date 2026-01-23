@@ -112,14 +112,18 @@ router.get("/", async (req, res, next) => {
       idx++;
     }
 
-    // ✅ active/inactive/all
-    if (filter === "active") {
-      where.push(`is_active = $${idx}`);
-      params.push(true);
-      idx++;
-    } else if (filter === "inactive") {
+    // ✅ active/inactive/all - default to active only for public access
+    if (filter === "inactive") {
       where.push(`is_active = $${idx}`);
       params.push(false);
+      idx++;
+    } else if (filter === "all") {
+      // Show all (active + inactive) only if explicitly requested
+      // This is typically for admin views
+    } else {
+      // Default: show only active parkings
+      where.push(`is_active = $${idx}`);
+      params.push(true);
       idx++;
     }
 

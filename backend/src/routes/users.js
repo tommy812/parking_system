@@ -83,11 +83,43 @@ router.get("/numberOwners", requireAuth, requireRole(["ADMIN"]), async (req, res
 router.get("/me", requireAuth, async (req, res, next) => {
   try {
     const r = await pool.query(
-      `SELECT id, email, role, phone, vehicle_reg, vehicle_model, vehicle_color, vehicle_year, created_at
+      `SELECT id, email, role, phone, first_name, last_name, address, vehicle_reg, vehicle_model, vehicle_color, vehicle_year, created_at
        FROM users
        WHERE id = $1`,
       [req.user.id]
     );
+    if (r.rowCount === 0) return res.status(404).json({ error: "User not found" });
+    res.json({ user: r.rows[0] });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// PUT /api/users/me -> update current user profile
+router.put("/me", requireAuth, async (req, res, next) => {
+  try {
+    const first_name = req.body.first_name === undefined ? undefined : (req.body.first_name ? String(req.body.first_name).trim() : null);
+    const last_name = req.body.last_name === undefined ? undefined : (req.body.last_name ? String(req.body.last_name).trim() : null);
+    const phone = req.body.phone === undefined ? undefined : (req.body.phone ? String(req.body.phone).trim() : null);
+    const address = req.body.address === undefined ? undefined : (req.body.address ? String(req.body.address).trim() : null);
+
+    const r = await pool.query(
+      `UPDATE users
+       SET first_name = COALESCE($2, first_name),
+           last_name = COALESCE($3, last_name),
+           phone = COALESCE($4, phone),
+           address = COALESCE($5, address)
+       WHERE id = $1
+       RETURNING id, email, role, phone, first_name, last_name, address, vehicle_reg, vehicle_model, vehicle_color, vehicle_year, created_at`,
+      [
+        req.user.id,
+        first_name === undefined ? null : first_name,
+        last_name === undefined ? null : last_name,
+        phone === undefined ? null : phone,
+        address === undefined ? null : address,
+      ]
+    );
+
     if (r.rowCount === 0) return res.status(404).json({ error: "User not found" });
     res.json({ user: r.rows[0] });
   } catch (e) {
@@ -289,7 +321,7 @@ router.put("/me/vehicle", requireAuth, async (req, res, next) => {
            vehicle_color = COALESCE($4, vehicle_color),
            vehicle_year = COALESCE($5, vehicle_year)
        WHERE id = $1
-       RETURNING id, email, role, phone, vehicle_reg, vehicle_model, vehicle_color, vehicle_year, created_at`,
+       RETURNING id, email, role, phone, first_name, last_name, address, vehicle_reg, vehicle_model, vehicle_color, vehicle_year, created_at`,
       [
         req.user.id,
         vehicle_reg === undefined ? null : vehicle_reg,

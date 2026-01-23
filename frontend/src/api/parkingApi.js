@@ -62,6 +62,7 @@ const normalizeParking = (parking, idx) => ({
   available: parking.available,
   capacity: parking.capacity,
   currency: parking.currency,
+  is_active: parking.is_active,
 });
 
 /**
@@ -111,7 +112,8 @@ export async function fetchParkings({ query, lat, lon, start_at, end_at, signal 
     .map(normalizeParking)
     .filter(
       (item) =>
-        Number.isFinite(item.latitude) && Number.isFinite(item.longitude)
+        Number.isFinite(item.latitude) && Number.isFinite(item.longitude) &&
+        (item.is_active === true || item.is_active === undefined) // Only show active parkings (undefined means not in response, assume active)
     );
 
   return { parkings: normalized };

@@ -44,6 +44,14 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  const getAuthHeader = () => {
+    if (!token) {
+      console.warn("No token available for authentication");
+      return {};
+    }
+    return { Authorization: `Bearer ${token}` };
+  };
+
   const value = useMemo(
     () => ({
       token,
@@ -52,6 +60,7 @@ export function AuthProvider({ children }) {
       login,
       logout,
       setUser,
+      getAuthHeader,
     }),
     [token, user]
   );

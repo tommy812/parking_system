@@ -1,6 +1,42 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001/api/";
 
 /**
+ * Get a booking quote for a parking and time range
+ */
+export async function getBookingQuote({ parking_id, start_at, end_at, authHeader = {} }) {
+  const response = await fetch(`${API_BASE_URL}bookings/quote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeader },
+    body: JSON.stringify({ parking_id, start_at, end_at }),
+  });
+
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body?.error || `Failed to get quote (${response.status})`);
+  }
+
+  return body;
+}
+
+/**
+ * Create a new booking
+ */
+export async function createBooking({ parking_id, start_at, end_at, authHeader = {} }) {
+  const response = await fetch(`${API_BASE_URL}bookings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeader },
+    body: JSON.stringify({ parking_id, start_at, end_at }),
+  });
+
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body?.error || `Failed to create booking (${response.status})`);
+  }
+
+  return body;
+}
+
+/**
  * Fetch bookings for the admin view with pagination and optional search/order/filter.
  */
 export async function fetchAdminBookings({
@@ -41,5 +77,3 @@ export async function fetchNumberOfBookings({ authHeader = {} } = {}) {
   }
   return response.json();
 }
-
-
