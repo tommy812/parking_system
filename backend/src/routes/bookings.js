@@ -304,42 +304,103 @@ router.get("/", requireAuth, requireRole(["ADMIN"]), async (req, res, next) => {
   }
 });
 
-// GET /api/bookings/mine -> list my bookings (USER/OWNER/ADMIN)
+// GET /api/bookings/mine -> list my bookings (USER/OWNER/ADMIN) with pagination/search/filter
 router.get("/mine", requireAuth, async (req, res, next) => {
   try {
-    // For OWNER: show bookings for their parkings; For USER: show their bookings; For ADMIN: show all.
-    if (req.user.role === "ADMIN") {
-      const r = await pool.query(
-        `SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
-         FROM bookings
-         ORDER BY created_at DESC`
-      );
-      return res.json({ bookings: r.rows });
-    }
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const pageSize = Math.min(Math.max(Number(req.query.page_size) || 20, 1), 100);
+    const query = req.query.query ? String(req.query.query).trim().toLowerCase() : "";
+    const statusFilter = req.query.filter ? String(req.query.filter).toUpperCase() : "";
+    const orderBy = req.query.order_by || "created_at DESC";
 
-    if (req.user.role === "OWNER") {
+    const params = [];
+    const where = [];
+    let idx = 1;
+
+    // Build WHERE clause based on user role
+    if (req.user.role === "ADMIN") {
+      // ADMIN sees all bookings
+    } else if (req.user.role === "OWNER") {
       if (req.user.is_approved !== true) {
         return res.status(403).json({ error: "Owner account pending admin approval" });
       }
-      const r = await pool.query(
-        `SELECT b.id, b.user_id, b.parking_id, b.status, b.start_at, b.end_at, b.total_amount_pence, b.currency, b.stripe_payment_intent_id, b.created_at, b.updated_at
-         FROM bookings b
-         JOIN parkings p ON p.id = b.parking_id
-         WHERE p.owner_user_id = $1
-         ORDER BY b.created_at DESC`,
-        [req.user.id]
-      );
-      return res.json({ bookings: r.rows });
+      where.push(`EXISTS (SELECT 1 FROM parkings p WHERE p.id = bookings.parking_id AND p.owner_user_id = $${idx})`);
+      params.push(req.user.id);
+      idx++;
+    } else {
+      // USER sees only their bookings
+      where.push(`user_id = $${idx}`);
+      params.push(req.user.id);
+      idx++;
     }
 
-    const r = await pool.query(
-      `SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
-       FROM bookings
-       WHERE user_id = $1
-       ORDER BY created_at DESC`,
-      [req.user.id]
-    );
-    return res.json({ bookings: r.rows });
+    // Status filter
+    if (statusFilter && statusFilter !== "ALL") {
+      const validStatuses = ["PENDING", "CONFIRMED", "CANCELLED", "EXPIRED"];
+      if (validStatuses.includes(statusFilter)) {
+        where.push(`status = $${idx}`);
+        params.push(statusFilter);
+        idx++;
+      }
+    }
+
+    // Search filter (searches booking ID, parking ID, user ID)
+    if (query) {
+      params.push(`%${query}%`);
+      where.push(
+        `(LOWER(id::text) LIKE $${idx} OR LOWER(parking_id::text) LIKE $${idx} OR LOWER(user_id::text) LIKE $${idx})`
+      );
+      idx++;
+    }
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+
+    // Order by
+    let orderClause = "ORDER BY created_at DESC";
+    if (orderBy) {
+      const validOrders = {
+        latest: "created_at DESC",
+        oldest: "created_at ASC",
+        "start_earliest": "start_at ASC",
+        "start_latest": "start_at DESC",
+        "price_low": "total_amount_pence ASC",
+        "price_high": "total_amount_pence DESC",
+      };
+      if (validOrders[orderBy]) {
+        orderClause = `ORDER BY ${validOrders[orderBy]}`;
+      } else if (orderBy.includes(" ")) {
+        // Allow custom order by if it looks safe
+        const safeOrder = orderBy.replace(/[^a-zA-Z0-9_,\s]/g, "");
+        if (safeOrder === orderBy) {
+          orderClause = `ORDER BY ${orderBy}`;
+        }
+      }
+    }
+
+    const offset = (page - 1) * pageSize;
+
+    const listSql = `
+      SELECT id, user_id, parking_id, status, start_at, end_at, total_amount_pence, currency, stripe_payment_intent_id, created_at, updated_at
+      FROM bookings
+      ${whereClause}
+      ${orderClause}
+      LIMIT ${pageSize} OFFSET ${offset}
+    `;
+
+    const countSql = `
+      SELECT COUNT(*)::int AS total
+      FROM bookings
+      ${whereClause}
+    `;
+
+    const [listRes, countRes] = await Promise.all([pool.query(listSql, params), pool.query(countSql, params)]);
+
+    res.json({
+      bookings: listRes.rows,
+      total: countRes.rows[0].total,
+      page,
+      page_size: pageSize,
+    });
   } catch (e) {
     next(e);
   }
